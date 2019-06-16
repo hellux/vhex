@@ -1,12 +1,10 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 import System.IO (FilePath)
 import System.Environment (getArgs)
 
 import qualified Data.Text as T
 
-import Data.Bits
-import Data.Word
+import Data.Bits ((.&.), shiftR, shiftL)
+import Data.Word (Word8)
 import Data.Char (chr)
 
 import Data.ByteString.Lazy (ByteString)
@@ -14,8 +12,7 @@ import qualified Data.ByteString.Lazy as BL
 
 import Graphics.Vty.Input.Events
 
-import Lens.Micro.TH
-import Lens.Micro
+import Lens.Micro ((^.))
 
 import Brick.Main
 import Brick.AttrMap
@@ -34,32 +31,32 @@ data CmdLineMode = CmdNone
                  deriving (Show)
 
 data Model e = Model
-    { _filePath :: FilePath
-    , _fileContents :: ByteString
-    , _cursorPos :: Int
-    , _scrollPos :: Int
-    , _cmdMode :: CmdLineMode
-    , _cmdForm :: Form T.Text e ResourceName
+    { filePath :: FilePath
+    , fileContents :: ByteString
+    , cursorPos :: Int
+    , scrollPos :: Int
+    , cmdMode :: CmdLineMode
+    , cmdForm :: Form T.Text e ResourceName
     }
-
-makeLenses ''Model
 
 initialModel :: FilePath -> IO (Model e)
 initialModel fname = do
     contents <- BL.readFile fname
     return $ Model
-        { _filePath = fname
-        , _fileContents = contents
-        , _cmdMode = CmdNone
-        , _cmdForm = (mkExForm $ T.empty)
-        , _cursorPos = 0
-        , _scrollPos = 0
+        { filePath = fname
+        , fileContents = contents
+        , cmdMode = CmdNone
+        , cmdForm = (mkExForm $ T.empty)
+        , cursorPos = 0
+        , scrollPos = 0
         }
 
 -- TODO change pos by n rows
 scroll :: Int -> Model e -> Model e
-scroll n m = m & scrollPos %~ incr where
-    incr prev = min (max 0 (n+prev)) $ fromIntegral (BL.length (m^.fileContents)-1)
+scroll n m = m { scrollPos = newPos } where
+    prev = scrollPos m
+    len = fromIntegral (BL.length (fileContents m)-1)
+    newPos = min (max 0 (n+prev)) len
 
 normalMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
 normalMode m vtye =
@@ -74,22 +71,22 @@ normalMode m vtye =
 exCmd :: Model e -> Event -> EventM ResourceName (Next (Model e))
 exCmd m vtye =
     case vtye of
-        EvKey KEsc [] -> continue $ m & cmdMode .~ CmdNone
-        EvKey KEnter [] -> continue $ m & cmdMode .~ CmdNone
+        EvKey KEsc [] -> continue $ m { cmdMode = CmdNone }
+        EvKey KEnter [] -> continue $ m { cmdMode = CmdNone }
         _ -> do
-            cmdForm' <- handleFormEvent (VtyEvent vtye) (m^.cmdForm)
-            continue (m & cmdForm .~ cmdForm')
+            cmdForm' <- handleFormEvent (VtyEvent vtye) (cmdForm m)
+            continue m { cmdForm = cmdForm'}
 
 update :: Model e -> BrickEvent ResourceName e
        -> EventM ResourceName (Next (Model e))
 update m e =
     case e of
         VtyEvent vtye ->
-            case m^.cmdMode of
+            case cmdMode m of
                 CmdNone ->
                     case vtye of
                         EvKey (KChar ':') [] ->
-                            continue (m & cmdMode .~ CmdEx)
+                            continue m { cmdMode = CmdEx}
                         _ ->
                             normalMode m vtye
                 CmdEx -> exCmd m vtye
@@ -134,23 +131,23 @@ createRows addrLength n i ws = str addr
 
 viewEditor :: Model e -> Widget ResourceName
 viewEditor m = Widget Greedy Greedy $ do
-    let contents = m^.fileContents
+    let contents = fileContents m
     ctx <- getContext
 
     let addrLength = let len = (fromIntegral (BL.length contents) :: Double)
                      in ceiling $ logBase 16 len
     let bytesPerRow = div (ctx^.availWidthL - addrLength - 1) 4
     let byteCount = bytesPerRow * ctx^.availHeightL
-    let bytes = take byteCount (drop (m^.scrollPos) (BL.unpack contents))
-    render $ vBox (createRows addrLength bytesPerRow (m^.scrollPos) bytes)
+    let bytes = take byteCount (drop (scrollPos m) (BL.unpack contents))
+    render $ vBox (createRows addrLength bytesPerRow (scrollPos m) bytes)
 
 viewCmdLine :: Model e -> Widget ResourceName
 viewCmdLine m =
-    case m^.cmdMode of
-        CmdNone -> str $ m^.filePath ++ ": "
-                      ++ show (m^.cursorPos) ++ ", "
-                      ++ show (m^.scrollPos)
-        CmdEx -> renderForm $ m^.cmdForm
+    case cmdMode m of
+        CmdNone -> str $ filePath m ++ ": "
+                      ++ show (cursorPos m) ++ ", "
+                      ++ show (scrollPos m)
+        CmdEx -> renderForm $ cmdForm m
         CmdSearch -> str " "
 
 view :: Model e -> [Widget ResourceName]
