@@ -160,27 +160,6 @@ toAscii w
     | w < 32 || w > 126 = "."
     | otherwise = [chr $ fromIntegral w]
 
-{-
-interleave :: [Widget ResourceName] -> [Widget ResourceName]
-interleave [] = []
-interleave [w] = [w]
-interleave (w:ws) = w : str " " : interleave ws
-
--- split list into rows with given string interleaved
-groupsOf :: Int -> Int -> Int -> [Word8] -> [Widget ResourceName]
-groupsOf _ _ _ [] = []
-groupsOf addrLength n addr ws = withAttr attrAddr (str hexAddr)
-              <+> withAttr attrDef (str " ")
-              <+> withAttr attrDef ((hBox . interleave) hexes)
-              <+> withAttr attrBar (str "|")
-              <+> withAttr attrDef (hBox asciis)
-                : groupsOf addrLength n (addr+n) (drop n ws) where
-    bytes = (take n ws)
-    hexes = fmap (str . toHex 2 . fromIntegral) bytes
-    asciis = fmap toAscii bytes
-    hexAddr = toHex addrLength addr
--}
-
 bytesPerRow :: Int -> Model e -> Int
 bytesPerRow w m = maxBytes - (mod maxBytes bytesPerRowMultiple) where
     maxBytes = div (w-(hexLength (fileLength m))-1) 4
@@ -237,20 +216,6 @@ viewEditor m = Widget Greedy Greedy $ do
             $ padLeft (Pad 2)
             $ viewAscii bytes perRow
         ]
-
-{-
-viewEditor :: Model e -> Widget ResourceName
-viewEditor m = Widget Greedy Greedy $ do
-    let contents = fileContents m
-    ctx <- getContext
-
-    let addrLength = hexLength (fileLength m)
-    let perRow = bytesPerRow (ctx^.availWidthL) m
-    let byteCount = perRow * ctx^.availHeightL
-    let bytes = take byteCount (drop (scrollPos m) (BL.unpack contents))
-    render $ reportExtent EditorViewPort
-           $ vBox (groupsOf addrLength perRow (scrollPos m) bytes)
-           -}
 
 viewCmdLine :: Model e -> Widget ResourceName
 viewCmdLine m =
