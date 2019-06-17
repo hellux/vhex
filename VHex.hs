@@ -12,6 +12,7 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BL
 
 import Graphics.Vty.Input.Events
+import qualified Graphics.Vty as VTY
 
 import Lens.Micro ((^.))
 
@@ -19,11 +20,13 @@ import Brick.Main
 import Brick.AttrMap
 import Brick.Forms
 import Brick.Types
+import qualified Brick.Util as BU
 import Brick.Widgets.Core
 
 data ResourceName = EditorViewPort
                   | CmdExLine
                   | EditorBuffer
+                  | HexCursor
                   deriving (Show, Eq, Ord)
 
 data CmdLineMode = CmdNone
@@ -40,6 +43,23 @@ data Model e = Model
     , cmdMode :: CmdLineMode
     , cmdForm :: Form T.Text e ResourceName
     }
+
+bytesPerRowMultiple :: Int
+bytesPerRowMultiple = 4
+
+-- attributes
+attrDef        :: AttrName
+attrDefSelLine :: AttrName
+attrDefSel     :: AttrName
+attrAddr       :: AttrName
+attrAddrSel    :: AttrName
+attrBar        :: AttrName
+attrDef         = attrName "def"
+attrDefSelLine  = attrName "defSelLine"
+attrDefSel      = attrName "defSel"
+attrAddr        = attrName "addr"
+attrAddrSel     = attrName "addrSel"
+attrBar         = attrName "bar"
 
 initialModel :: Model e
 initialModel = Model
@@ -135,32 +155,90 @@ toHex n d = c !! shifted : toHex (n-1) masked
           shifted = (shiftR d s) .&. 0xf
           masked = d .&. ((shiftL 1 s)-1)
 
-toAscii :: Word8 -> Widget ResourceName
+toAscii :: Word8 -> String
 toAscii w
-    | w < 32 = str "."
-    | otherwise = str [chr $ fromIntegral w]
+    | w < 32 || w > 126 = "."
+    | otherwise = [chr $ fromIntegral w]
 
+{-
 interleave :: [Widget ResourceName] -> [Widget ResourceName]
 interleave [] = []
 interleave [w] = [w]
 interleave (w:ws) = w : str " " : interleave ws
 
-createRows :: Int -> Int -> Int -> [Word8] -> [Widget ResourceName]
-createRows _ _ _ [] = []
-createRows addrLength n i ws = str addr
-              <+> str " "
-              <+> (hBox . interleave) hexes
-              <+> str "|"
-              <+> hBox asciis
-                : createRows addrLength n (i+n) (drop n ws) where
+-- split list into rows with given string interleaved
+groupsOf :: Int -> Int -> Int -> [Word8] -> [Widget ResourceName]
+groupsOf _ _ _ [] = []
+groupsOf addrLength n addr ws = withAttr attrAddr (str hexAddr)
+              <+> withAttr attrDef (str " ")
+              <+> withAttr attrDef ((hBox . interleave) hexes)
+              <+> withAttr attrBar (str "|")
+              <+> withAttr attrDef (hBox asciis)
+                : groupsOf addrLength n (addr+n) (drop n ws) where
     bytes = (take n ws)
     hexes = fmap (str . toHex 2 . fromIntegral) bytes
     asciis = fmap toAscii bytes
-    addr = toHex addrLength i
+    hexAddr = toHex addrLength addr
+-}
 
 bytesPerRow :: Int -> Model e -> Int
-bytesPerRow w m = div (w-(hexLength (fileLength m))-1) 4
+bytesPerRow w m = maxBytes - (mod maxBytes bytesPerRowMultiple) where
+    maxBytes = div (w-(hexLength (fileLength m))-1) 4
 
+interleave :: a -> [a] -> [a]
+interleave _ [] = []
+interleave _ [x] = [x]
+interleave i (x:xs) = x : i : interleave i xs
+
+groupsOf :: Int -> [a] -> [[a]]
+groupsOf _ [] = []
+groupsOf n xs = let (y,ys) = splitAt n xs
+               in y : groupsOf n ys
+
+viewAddr :: Int -> Int -> Int -> Int -> Widget ResourceName
+viewAddr start step maxAddr rowCount = vBox rows where
+    addrLength = hexLength maxAddr
+    rows = [ if addr <= maxAddr
+                then str (toHex addrLength addr)
+                else str "~"
+            | r <- [0..rowCount],
+              let addr = start+step*r
+           ]
+
+viewHex :: [Word8] -> Int -> Widget ResourceName
+viewHex bytes perRow = vBox rows where
+    rows = fmap str
+         $ fmap (concat . (interleave " "))
+         $ groupsOf perRow (fmap ((toHex 2) . fromIntegral) bytes)
+
+viewAscii :: [Word8] -> Int -> Widget ResourceName
+viewAscii bytes perRow = vBox rows where
+    rows = fmap str
+         $ fmap concat
+         $ groupsOf perRow (fmap toAscii bytes)
+
+viewEditor :: Model e -> Widget ResourceName
+viewEditor m = Widget Greedy Greedy $ do
+    ctx <- getContext
+    let perRow = bytesPerRow (ctx^.availWidthL) m
+    let rowCount = ctx^.availHeightL
+    let bytes = let byteCount = fromIntegral $ rowCount*perRow
+                    start = fromIntegral $ scrollPos m
+                    allBytes = fileContents m
+                    visibleBytes = BL.take byteCount (BL.drop start allBytes)
+                in BL.unpack $ visibleBytes
+    render $ reportExtent EditorViewPort $ hBox
+        [ withAttr attrAddr
+            $ padRight (Pad 2)
+            $ viewAddr (scrollPos m) perRow (fileLength m) rowCount
+        , withAttr attrDef
+            $ viewHex bytes perRow
+        , withAttr attrDef
+            $ padLeft (Pad 2)
+            $ viewAscii bytes perRow
+        ]
+
+{-
 viewEditor :: Model e -> Widget ResourceName
 viewEditor m = Widget Greedy Greedy $ do
     let contents = fileContents m
@@ -171,7 +249,8 @@ viewEditor m = Widget Greedy Greedy $ do
     let byteCount = perRow * ctx^.availHeightL
     let bytes = take byteCount (drop (scrollPos m) (BL.unpack contents))
     render $ reportExtent EditorViewPort
-           $ vBox (createRows addrLength perRow (scrollPos m) bytes)
+           $ vBox (groupsOf addrLength perRow (scrollPos m) bytes)
+           -}
 
 viewCmdLine :: Model e -> Widget ResourceName
 viewCmdLine m =
@@ -183,15 +262,24 @@ viewCmdLine m =
         CmdSearch -> str " "
 
 view :: Model e -> [Widget ResourceName]
-view m =
-    [ viewEditor m <=> viewCmdLine m ]
+view m = [
+    padBottom Max (viewEditor m) <=>
+    viewCmdLine m
+    ]
 
 app :: App (Model e) e ResourceName
 app = App { appDraw = view
           , appChooseCursor = showFirstCursor
           , appHandleEvent = update
           , appStartEvent = pure
-          , appAttrMap = const $ attrMap mempty []
+          , appAttrMap = const $ attrMap mempty
+            [ (attrDef,          BU.fg VTY.brightWhite)
+            , (attrDefSelLine,   BU.bg VTY.white)
+            , (attrDefSel,       (VTY.black `BU.on` VTY.brightWhite))
+            , (attrAddr,         BU.fg VTY.brightBlack)
+            , (attrAddrSel,      BU.fg VTY.brightYellow)
+            , (attrBar,          BU.fg VTY.brightBlack)
+            ]
           }
 
 main :: IO (Model e)
