@@ -50,16 +50,23 @@ bytesPerRowMultiple = 4
 -- attributes
 attrDef        :: AttrName
 attrDefSelLine :: AttrName
-attrDefSel     :: AttrName
 attrAddr       :: AttrName
 attrAddrSel    :: AttrName
-attrBar        :: AttrName
 attrDef         = attrName "def"
 attrDefSelLine  = attrName "defSelLine"
-attrDefSel      = attrName "defSel"
 attrAddr        = attrName "addr"
 attrAddrSel     = attrName "addrSel"
-attrBar         = attrName "bar"
+
+attributes :: AttrMap
+attributes = attrMap mempty
+    [ (attrDef,        BU.fg fg)
+    , (attrDefSelLine, BU.bg grey23)
+    , (attrAddr,       BU.fg grey)
+    , (attrAddrSel,    yellow `BU.on` grey23)
+    ] where grey23 = VTY.rgbColor (58::Int) (58::Int) (58::Int)
+            fg = VTY.brightWhite
+            grey = VTY.brightBlack
+            yellow = VTY.brightYellow
 
 initialModel :: Model e
 initialModel = Model
@@ -80,36 +87,36 @@ openFile path m = do
     len <- fmap (fromIntegral . fileSize) (getFileStatus path)
     return m { filePath = path, fileContents = contents, fileLength = len }
 
-scroll :: Int -> Model e -> EventM ResourceName (Model e)
-scroll n m = do
-    extent <- Brick.Main.lookupExtent EditorViewPort
+viewportDims :: EventM ResourceName (Int, Int)
+viewportDims = do
+    extent <- lookupExtent EditorViewPort
     case extent of
-        Nothing ->
-            return m
-        Just (Extent _ _ (w, rows) _) -> do
-            let perRow = bytesPerRow w m
-            let prev = scrollPos m
-            let len = (fileLength m)
-            let maxPos = max 0 (len-perRow*rows)
-            let newPos = min (max 0 (n*perRow+prev)) maxPos
-            return m { scrollPos = newPos }
+        Nothing -> return (0, 0)
+        Just (Extent _ _ dims _) -> return dims
+
+scroll :: Int -> Model e -> EventM ResourceName (Model e)
+scroll n m = viewportDims >>= scroll' where
+    scroll' (w, h) = return
+        m { scrollPos = let perRow = bytesPerRow w m
+                            prev = scrollPos m
+                            maxPos = max 0 ((fileLength m) - perRow*h)
+                        in min (max 0 (n*perRow+prev)) maxPos }
 
 scrollBottom :: Model e -> EventM ResourceName (Model e)
-scrollBottom m = do
-    extent <- Brick.Main.lookupExtent EditorViewPort
-    case extent of
-        Nothing ->
-            return m
-        Just (Extent _ _ (w, rows) _) -> do
-            let len = fileLength m
-            return m { scrollPos = max 0 (len-(bytesPerRow w m)*rows) }
+scrollBottom m = viewportDims >>= scrollBottom' where
+    scrollBottom' (w, h) = return
+        m { scrollPos = max 0 $ (fileLength m) - (bytesPerRow w m)*h }
 
 scrollTop :: Model e -> EventM ResourceName (Model e)
-scrollTop m = pure $ m { scrollPos = 0 }
+scrollTop m = return m { scrollPos = 0 }
+
+curRight :: Model e -> EventM ResourceName (Model e)
+curRight m = return m { cursorPos = (cursorPos m) + 1 }
 
 normalMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
 normalMode m vtye =
     case vtye of
+        EvKey (KChar 'l') [] -> curRight m >>= continue
         EvKey (KChar 'q') [] -> halt m
         EvKey (KChar 'y') [MCtrl] -> scroll ( -1) m >>= continue
         EvKey (KChar 'e') [MCtrl] -> scroll (  1) m >>= continue
@@ -174,19 +181,26 @@ groupsOf _ [] = []
 groupsOf n xs = let (y,ys) = splitAt n xs
                in y : groupsOf n ys
 
-viewAddr :: Int -> Int -> Int -> Int -> Widget ResourceName
-viewAddr start step maxAddr rowCount = vBox rows where
+viewAddr :: Int -> Int -> Int -> Int -> Int -> Widget ResourceName
+viewAddr start step selected maxAddr rowCount = vBox rows where
     addrLength = hexLength maxAddr
-    rows = [ if addr <= maxAddr
-                then str (toHex addrLength addr)
-                else str "~"
+    rows = [ withAttr attr
+             $ str
+             $ if addr <= maxAddr
+                then (toHex addrLength addr)
+                else "~"
             | r <- [0..rowCount],
-              let addr = start+step*r
+              let addr = start+step*r,
+              let attr = if r == selected then attrAddrSel else attrAddr
            ]
 
-viewHex :: [Word8] -> Int -> Widget ResourceName
-viewHex bytes perRow = vBox rows where
-    rows = fmap str
+viewHex :: [Word8] -> Int -> Int -> Widget ResourceName
+viewHex bytes perRow selectedRow = vBox rows where
+    widgetize r row = let attr = if r == selectedRow
+                                    then attrDefSelLine
+                                    else attrDef
+                      in withAttr attr (str row)
+    rows = zipWith widgetize [0..]
          $ fmap (concat . (interleave " "))
          $ groupsOf perRow (fmap ((toHex 2) . fromIntegral) bytes)
 
@@ -206,12 +220,17 @@ viewEditor m = Widget Greedy Greedy $ do
                     allBytes = fileContents m
                     visibleBytes = BL.take byteCount (BL.drop start allBytes)
                 in BL.unpack $ visibleBytes
+    let selectedRow = div ((cursorPos m) - (scrollPos m)) perRow
     render $ reportExtent EditorViewPort $ hBox
         [ withAttr attrAddr
             $ padRight (Pad 2)
-            $ viewAddr (scrollPos m) perRow (fileLength m) rowCount
+            $ viewAddr (scrollPos m)
+                       perRow
+                       selectedRow
+                       (fileLength m)
+                       rowCount
         , withAttr attrDef
-            $ viewHex bytes perRow
+            $ viewHex bytes perRow selectedRow
         , withAttr attrDef
             $ padLeft (Pad 2)
             $ viewAscii bytes perRow
@@ -237,14 +256,7 @@ app = App { appDraw = view
           , appChooseCursor = showFirstCursor
           , appHandleEvent = update
           , appStartEvent = pure
-          , appAttrMap = const $ attrMap mempty
-            [ (attrDef,          BU.fg VTY.brightWhite)
-            , (attrDefSelLine,   BU.bg VTY.white)
-            , (attrDefSel,       (VTY.black `BU.on` VTY.brightWhite))
-            , (attrAddr,         BU.fg VTY.brightBlack)
-            , (attrAddrSel,      BU.fg VTY.brightYellow)
-            , (attrBar,          BU.fg VTY.brightBlack)
-            ]
+          , appAttrMap = const attributes
           }
 
 main :: IO (Model e)
