@@ -90,11 +90,13 @@ attrDefSelRow :: AttrName
 attrDefSelCol :: AttrName
 attrOffset :: AttrName
 attrOffsetSel :: AttrName
+attrStatusBar :: AttrName
 attrDef = attrName "def"
 attrDefSelRow = attrName "defSelRow"
 attrDefSelCol = attrName "defSelCol"
 attrOffset = attrName "offset"
 attrOffsetSel = attrName "offsetSel"
+attrStatusBar = attrName "statusbar"
 
 attributes :: AttrMap
 attributes = attrMap mempty
@@ -103,11 +105,13 @@ attributes = attrMap mempty
     , (attrDefSelCol, bg `BU.on` fg)
     , (attrOffset, BU.fg grey)
     , (attrOffsetSel, yellow `BU.on` grey23)
-    ] where grey23 = VTY.rgbColor (58::Int) (58::Int) (58::Int)
-            fg = VTY.brightWhite
+    , (attrStatusBar, BU.bg grey30)
+    ] where fg = VTY.brightWhite
             bg = VTY.black
             grey = VTY.brightBlack
             yellow = VTY.brightYellow
+            grey23 = VTY.rgbColor (58::Int) (58::Int) (58::Int)
+            grey30 = VTY.rgbColor (78::Int) (78::Int) (78::Int)
 
 initialModel :: Model e
 initialModel = Model
@@ -311,17 +315,21 @@ viewEditor m = Widget Greedy Greedy $ do
         $ hBox
         $ offset : views
 
+viewStatusBar :: Model e -> Widget ResourceName
+viewStatusBar m = withAttr attrStatusBar $ str $
+    filePath m ++ ": "
+    ++ show (cursorPos m) ++ ", "
+    ++ show (scrollPos m) ++ "  "
+
 viewCmdLine :: Model e -> Widget ResourceName
 viewCmdLine m =
     case cmdMode m of
-        CmdNone -> str $ filePath m ++ ": "
-                      ++ show (cursorPos m) ++ ", "
-                      ++ show (scrollPos m) ++ "  "
+        CmdNone -> str " "
         CmdEx -> renderForm $ cmdForm m
         CmdSearch -> str " "
 
 view :: Model e -> [Widget ResourceName]
-view m = [ viewEditor m <=> viewCmdLine m ]
+view m = [ viewEditor m <=> viewStatusBar m <=> viewCmdLine m ]
 
 app :: App (Model e) e ResourceName
 app = App { appDraw = view
