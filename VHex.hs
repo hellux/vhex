@@ -94,6 +94,7 @@ viewportDims = do
         Nothing -> return (0, 0)
         Just (Extent _ _ dims _) -> return dims
 
+-- TODO replace scrollPos with line no
 scroll :: Int -> Model e -> EventM ResourceName (Model e)
 scroll n m = viewportDims >>= scroll' where
     scroll' (w, h) = return
@@ -110,30 +111,38 @@ scrollBottom m = viewportDims >>= scrollBottom' where
 scrollTop :: Model e -> EventM ResourceName (Model e)
 scrollTop m = return m { scrollPos = 0 }
 
-curRight :: Model e -> EventM ResourceName (Model e)
-curRight m = return m { cursorPos = (cursorPos m) + 1 }
+curHori :: Int -> Model e -> EventM ResourceName (Model e)
+curHori n m = return m { cursorPos = (cursorPos m) + n }
+
+curVert :: Int -> Model e -> EventM ResourceName (Model e)
+curVert n m = viewportDims >>= curRight' where
+    curRight' (w, _) = let step = bytesPerRow w m
+                       in return m { cursorPos = (cursorPos m) + step*n }
 
 normalMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
 normalMode m vtye =
     case vtye of
-        EvKey (KChar 'l') [] -> curRight m >>= continue
-        EvKey (KChar 'q') [] -> halt m
+        EvKey (KChar 'h') []      -> curHori (-1) m >>= continue
+        EvKey (KChar 'j') []      -> curVert ( 1) m >>= continue
+        EvKey (KChar 'k') []      -> curVert (-1) m >>= continue
+        EvKey (KChar 'l') []      -> curHori ( 1) m >>= continue
         EvKey (KChar 'y') [MCtrl] -> scroll ( -1) m >>= continue
         EvKey (KChar 'e') [MCtrl] -> scroll (  1) m >>= continue
         EvKey (KChar 'u') [MCtrl] -> scroll (-15) m >>= continue
         EvKey (KChar 'd') [MCtrl] -> scroll ( 15) m >>= continue
-        EvKey (KChar 'g') [] -> scrollTop m >>= continue
-        EvKey (KChar 'G') [] -> scrollBottom m >>= continue
+        EvKey (KChar 'g') []      -> scrollTop m    >>= continue
+        EvKey (KChar 'G') []      -> scrollBottom m >>= continue
+        EvKey (KChar 'q') []      -> halt m
         _ -> continue m
 
 exCmd :: Model e -> Event -> EventM ResourceName (Next (Model e))
 exCmd m vtye =
     case vtye of
-        EvKey KEsc [] -> continue $ m { cmdMode = CmdNone }
+        EvKey KEsc   [] -> continue $ m { cmdMode = CmdNone }
         EvKey KEnter [] -> continue $ m { cmdMode = CmdNone }
         _ -> do
             cmdForm' <- handleFormEvent (VtyEvent vtye) (cmdForm m)
-            continue m { cmdForm = cmdForm'}
+            continue m { cmdForm = cmdForm' }
 
 update :: Model e -> BrickEvent ResourceName e
        -> EventM ResourceName (Next (Model e))
@@ -168,7 +177,7 @@ toAscii w
     | otherwise = [chr $ fromIntegral w]
 
 bytesPerRow :: Int -> Model e -> Int
-bytesPerRow w m = maxBytes - (mod maxBytes bytesPerRowMultiple) where
+bytesPerRow w m = max 1 $ maxBytes - (mod maxBytes bytesPerRowMultiple) where
     maxBytes = div (w-(hexLength (fileLength m))-1) 4
 
 interleave :: a -> [a] -> [a]
