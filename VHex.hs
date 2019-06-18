@@ -41,6 +41,29 @@ data CmdLineMode = CmdNone
                  | CmdSearch
                  deriving (Show)
 
+data ByteView = ByteView {
+    fromWord :: Word8 -> String,
+    toWord :: String -> Word8,
+    space :: Int
+}
+
+displayWidth :: ByteView -> Int
+displayWidth bv = textWidth $ (fromWord bv) 0
+
+hex :: ByteView
+hex = ByteView {
+    fromWord = (toHex 2) . fromIntegral,
+    toWord = undefined,
+    space = 1
+}
+
+ascii1 :: ByteView
+ascii1 = ByteView {
+    fromWord = \w -> if w < 32 || w > 126 then "." else [chr $ fromIntegral w],
+    toWord = undefined,
+    space = 0
+}
+
 --data BytePart = FullByte | LowerNibble | UpperNibble
 
 data Model e = Model
@@ -57,6 +80,9 @@ data Model e = Model
 
 bytesPerRowMultiple :: Int
 bytesPerRowMultiple = 4
+
+layout :: [ByteView]
+layout = [ hex, ascii1 ]
 
 -- attributes
 attrDef :: AttrName
@@ -98,9 +124,12 @@ initialModel = Model
         T.empty
     }
 
-bytesPerRow :: Int -> Model e -> Int
-bytesPerRow w m = max 1 $ maxBytes - (mod maxBytes bytesPerRowMultiple)
-    where maxBytes = div (w-(hexLength (fileLength m))-1) 4
+bytesPerRow :: Int -> Int -> Int
+bytesPerRow w byteCount = max 1 $ floorN bytesPerRowMultiple maxBytes where
+    offsetWidth = hexLength $ byteCount - 1
+    linWidth = sum $ map ((+) <$> displayWidth <*> space) layout
+    padding = length layout - 1
+    maxBytes = div (w - offsetWidth - padding) linWidth
 
 openFile :: FilePath -> Model e -> IO (Model e)
 openFile path m = do
@@ -118,7 +147,7 @@ viewportSize = do
 scroll :: Int -> Model e -> EventM ResourceName (Model e)
 scroll n m = viewportSize >>= scroll' where
     scroll' (w, _) = return
-        m { scrollPos = let perRow = bytesPerRow w m
+        m { scrollPos = let perRow = bytesPerRow w (fileLength m)
                             prev = scrollPos m
                             maxPos = floorN perRow (fileLength m - 1)
                         in BU.clamp 0 maxPos (prev + n*perRow) }
@@ -126,7 +155,7 @@ scroll n m = viewportSize >>= scroll' where
 scrollBottom :: Model e -> EventM ResourceName (Model e)
 scrollBottom m = viewportSize >>= scrollBottom' where
     scrollBottom' (w, h) = return $
-        let perRow = bytesPerRow w m
+        let perRow = bytesPerRow w (fileLength m)
             maxPos = fileLength m - 1
         in m { scrollPos = max 0 $ ceilN perRow (maxPos - perRow*h) }
 
@@ -139,7 +168,7 @@ curHori n m = return
 
 curVert :: Int -> Model e -> EventM ResourceName (Model e)
 curVert n m = viewportSize >>= curVert' where
-    curVert' (w, _) = let step = bytesPerRow w m
+    curVert' (w, _) = let step = bytesPerRow w (fileLength m)
                           newPos = (cursorPos m) + n*step
                           allowed = 0 <= newPos && newPos < fileLength m
                       in return
@@ -200,11 +229,6 @@ toHex n d = c !! shifted : toHex (n-1) masked
           shifted = (shiftR d s) .&. 0xf
           masked = d .&. ((shiftL 1 s)-1)
 
-toAscii :: Word8 -> String
-toAscii w
-    | w < 32 || w > 126 = "."
-    | otherwise = [chr $ fromIntegral w]
-
 -- round down to closest multiple of n
 floorN :: Int -> Int -> Int
 floorN n x = x - (mod x n)
@@ -236,20 +260,17 @@ groupsOf n xs = let (y,ys) = splitAt n xs
 
 viewOffset :: Int -> Int -> Int -> Int -> Int -> Widget ResourceName
 viewOffset start step selected maxAddr rowCount = vBox rows where
-    rows = [ withAttr attr
-             $ str
-             $ if offset <= maxAddr
-                then (toHex (hexLength maxAddr) offset)
-                else "~"
-            | r <- [0..rowCount],
-              let offset = start + r*step,
-              let attr = if r == selected then attrOffsetSel else attrOffset
-           ]
+    styleRow r = if r == selected then attrOffsetSel else attrOffset
+    display offset = if offset <= maxAddr
+                        then toHex (hexLength maxAddr) offset
+                        else "~"
+    rows = ( zipWith withAttr (fmap styleRow [0..rowCount-1])
+           . fmap str
+           . fmap display
+           ) [start, start+step..]
 
-viewBytes :: [Word8] -> (Word8 -> String) -> Int
-          -> Int -> Int -> Widget ResourceName
-viewBytes bytes display perRow
-          selectedRow selectedCol = vBox rows where
+viewBytes :: [Word8] -> Int -> Int -> Int -> ByteView -> Widget ResourceName
+viewBytes bytes perRow selectedRow selectedCol bv = vBox rows where
     styleCol (r, c) col = if c == selectedCol && r == selectedRow
                             then withAttr attrDefSelCol col
                             else col
@@ -257,22 +278,22 @@ viewBytes bytes display perRow
                                     then attrDefSelRow
                                     else attrDef
                      in withAttr attr row
-    width = textWidth (display 0)
-    space = if width > 1 then str " " else emptyWidget
+    width = displayWidth bv
     emptyByte = str $ replicate width ' '
     rows = ( zipWith styleRow [0..]
            . fmap hBox
-           . fmap (interleave space)
+           . fmap (interleave (str (replicate (space bv) ' ')))
+           . fmap ((str "  ") :)
            . fmap (padOut perRow emptyByte)
            . groupsOf perRow
            . zipWith styleCol [ (div i perRow, mod i perRow) | i <- [0..] ]
-           . fmap (str . display)
+           . fmap (str . (fromWord bv))
            ) bytes
 
 viewEditor :: Model e -> Widget ResourceName
 viewEditor m = Widget Greedy Greedy $ do
     ctx <- getContext
-    let perRow = bytesPerRow (ctx^.availWidthL) m
+    let perRow = bytesPerRow (ctx^.availWidthL) (fileLength m)
     let rowCount = ctx^.availHeightL
     let bytes = let byteCount = fromIntegral $ rowCount*perRow
                     start = fromIntegral $ scrollPos m
@@ -281,21 +302,14 @@ viewEditor m = Widget Greedy Greedy $ do
                 in BL.unpack $ visibleBytes
     let selectedRow = div ((cursorPos m) - (scrollPos m)) perRow
     let selectedCol = mod (cursorPos m) perRow
-    render $ reportExtent EditorViewPort $ hBox
-        [ withAttr attrOffset
-            $ viewOffset (scrollPos m)
-                       perRow
-                       selectedRow
-                       (fileLength m - 1)
-                       rowCount
-        , withAttr attrDef
-            $ padLeftRight 2
-            $ viewBytes bytes (toHex 2 . fromIntegral)
-                        perRow selectedRow selectedCol
-        , withAttr attrDef
-            $ viewBytes bytes toAscii
-                        perRow selectedRow selectedCol
-        ]
+    let offset = withAttr attrOffset
+               $ viewOffset (scrollPos m) perRow selectedRow
+                             (fileLength m - 1) rowCount
+    let views = map (viewBytes bytes perRow selectedRow selectedCol) layout
+    render
+        $ reportExtent EditorViewPort
+        $ hBox
+        $ offset : views
 
 viewCmdLine :: Model e -> Widget ResourceName
 viewCmdLine m =
@@ -320,5 +334,7 @@ app = App { appDraw = view
 main :: IO (Model e)
 main = do
     args <- getArgs
-    initial <- openFile (args !! 0) initialModel
+    initial <- if length args > 0
+                then openFile (args !! 0) initialModel
+                else return initialModel
     defaultMain app initial
