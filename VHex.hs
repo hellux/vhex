@@ -17,10 +17,10 @@ import qualified Graphics.Vty as VTY
 import Lens.Micro ((^.))
 
 import Brick.Main
-import Brick.AttrMap
-import Brick.Forms
+import Brick.AttrMap (AttrMap, attrMap, AttrName, attrName)
 import Brick.Types
 import qualified Brick.Util as BU
+import Brick.Forms
 import Brick.Widgets.Core
 
 data ResourceName = EditorViewPort
@@ -59,23 +59,27 @@ bytesPerRowMultiple :: Int
 bytesPerRowMultiple = 4
 
 -- attributes
-attrDef        :: AttrName
-attrDefSelLine :: AttrName
-attrOffset     :: AttrName
-attrOffsetSel  :: AttrName
-attrDef        = attrName "def"
-attrDefSelLine = attrName "defSelLine"
-attrOffset     = attrName "offset"
-attrOffsetSel  = attrName "offsetSel"
+attrDef :: AttrName
+attrDefSelRow :: AttrName
+attrDefSelCol :: AttrName
+attrOffset :: AttrName
+attrOffsetSel :: AttrName
+attrDef = attrName "def"
+attrDefSelRow = attrName "defSelRow"
+attrDefSelCol = attrName "defSelCol"
+attrOffset = attrName "offset"
+attrOffsetSel = attrName "offsetSel"
 
 attributes :: AttrMap
 attributes = attrMap mempty
-    [ (attrDef,        BU.fg fg)
-    , (attrDefSelLine, BU.bg grey23)
-    , (attrOffset,     BU.fg grey)
-    , (attrOffsetSel,  yellow `BU.on` grey23)
+    [ (attrDef, BU.fg fg)
+    , (attrDefSelRow, BU.bg grey23)
+    , (attrDefSelCol, bg `BU.on` fg)
+    , (attrOffset, BU.fg grey)
+    , (attrOffsetSel, yellow `BU.on` grey23)
     ] where grey23 = VTY.rgbColor (58::Int) (58::Int) (58::Int)
             fg = VTY.brightWhite
+            bg = VTY.black
             grey = VTY.brightBlack
             yellow = VTY.brightYellow
 
@@ -117,7 +121,7 @@ scroll n m = viewportSize >>= scroll' where
         m { scrollPos = let perRow = bytesPerRow w m
                             prev = scrollPos m
                             maxPos = floorN perRow (fileLength m - 1)
-                        in min (max 0 (prev + n*perRow)) maxPos }
+                        in BU.clamp 0 maxPos (prev + n*perRow) }
 
 scrollBottom :: Model e -> EventM ResourceName (Model e)
 scrollBottom m = viewportSize >>= scrollBottom' where
@@ -130,12 +134,18 @@ scrollTop :: Model e -> EventM ResourceName (Model e)
 scrollTop m = return m { scrollPos = 0 }
 
 curHori :: Int -> Model e -> EventM ResourceName (Model e)
-curHori n m = return m { cursorPos = (cursorPos m) + n }
+curHori n m = return
+    m { cursorPos = BU.clamp 0 (fileLength m -1) ((cursorPos m) + n) }
 
 curVert :: Int -> Model e -> EventM ResourceName (Model e)
 curVert n m = viewportSize >>= curVert' where
     curVert' (w, _) = let step = bytesPerRow w m
-                       in return m { cursorPos = (cursorPos m) + step*n }
+                          newPos = (cursorPos m) + n*step
+                          allowed = 0 <= newPos && newPos < fileLength m
+                      in return
+                        m { cursorPos = if allowed
+                                            then newPos
+                                            else cursorPos m }
 
 normalMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
 normalMode m vtye =
@@ -195,10 +205,11 @@ toAscii w
     | w < 32 || w > 126 = "."
     | otherwise = [chr $ fromIntegral w]
 
--- round down to closes multiple of n
+-- round down to closest multiple of n
 floorN :: Int -> Int -> Int
 floorN n x = x - (mod x n)
 
+-- round up to closest multiple of n
 ceilN :: Int -> Int -> Int
 ceilN n x
     | mod x n == 0 = x
@@ -235,16 +246,26 @@ viewOffset start step selected maxAddr rowCount = vBox rows where
               let attr = if r == selected then attrOffsetSel else attrOffset
            ]
 
-viewHex :: [Word8] -> Int -> Int -> Widget ResourceName
-viewHex bytes perRow selectedRow = vBox rows where
-    widgetize r row = let attr = if r == selectedRow
-                                    then attrDefSelLine
+viewHex :: [Word8] -> Int -> Int -> Int -> Widget ResourceName
+viewHex bytes perRow selectedRow selectedCol = vBox rows where
+    styleCol (r, c) col = if c == selectedCol && r == selectedRow
+                            then withAttr attrDefSelCol col
+                            else col
+    styleRow r row = let attr = if r == selectedRow
+                                    then attrDefSelRow
                                     else attrDef
-                      in withAttr attr (str row)
-    rows = zipWith widgetize [0..]
-         $ fmap (concat . (interleave " "))
-         $ fmap (padOut perRow "  ")
-         $ groupsOf perRow (fmap ((toHex 2) . fromIntegral) bytes)
+                     in withAttr attr row
+    space = str " "
+    emptyByte = str "  "
+    rows = ( zipWith styleRow [0..]
+           . fmap hBox
+           . fmap (interleave space)
+           . fmap (padOut perRow emptyByte)
+           . groupsOf perRow
+           . zipWith styleCol [ (div i perRow, mod i perRow) | i <- [0..] ]
+           . fmap str
+           . fmap ((toHex 2) . fromIntegral)
+           ) bytes
 
 viewAscii :: [Word8] -> Int -> Widget ResourceName
 viewAscii bytes perRow = vBox rows where
@@ -264,18 +285,18 @@ viewEditor m = Widget Greedy Greedy $ do
                     visibleBytes = BL.take byteCount (BL.drop start allBytes)
                 in BL.unpack $ visibleBytes
     let selectedRow = div ((cursorPos m) - (scrollPos m)) perRow
+    let selectedCol = mod (cursorPos m) perRow
     render $ reportExtent EditorViewPort $ hBox
         [ withAttr attrOffset
-            $ padRight (Pad 2)
             $ viewOffset (scrollPos m)
                        perRow
                        selectedRow
                        (fileLength m - 1)
                        rowCount
         , withAttr attrDef
-            $ viewHex bytes perRow selectedRow
+            $ padLeftRight 2
+            $ viewHex bytes perRow selectedRow selectedCol
         , withAttr attrDef
-            $ padLeft (Pad 2)
             $ viewAscii bytes perRow
         ]
 
@@ -289,7 +310,7 @@ viewCmdLine m =
         CmdSearch -> str " "
 
 view :: Model e -> [Widget ResourceName]
-view m = [ padBottom Max (viewEditor m) <=> viewCmdLine m ]
+view m = [ viewEditor m <=> viewCmdLine m ]
 
 app :: App (Model e) e ResourceName
 app = App { appDraw = view
