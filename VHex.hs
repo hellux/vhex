@@ -180,6 +180,19 @@ curVert n m = viewportSize >>= curVert' where
                                             then newPos
                                             else cursorPos m }
 
+curBeginning :: Model e -> EventM ResourceName (Model e)
+curBeginning m = viewportSize >>= curBeginning' where
+    curBeginning' (w, _) = let perRow = bytesPerRow w (fileLength m)
+                           in return
+                            m { cursorPos = floorN perRow (cursorPos m) }
+
+curEnd :: Model e -> EventM ResourceName (Model e)
+curEnd m = viewportSize >>= curEnd' where
+    curEnd' (w, _) = let perRow = bytesPerRow w (fileLength m)
+                         lineEnd = floorN perRow (cursorPos m) + perRow - 1
+                     in return
+                        m { cursorPos = min lineEnd (fileLength m - 1) }
+
 normalMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
 normalMode m vtye =
     case vtye of
@@ -187,6 +200,9 @@ normalMode m vtye =
         EvKey (KChar 'j') []      -> curVert ( 1) m >>= continue
         EvKey (KChar 'k') []      -> curVert (-1) m >>= continue
         EvKey (KChar 'l') []      -> curHori ( 1) m >>= continue
+        EvKey (KChar '0') []      -> curBeginning m >>= continue
+        EvKey (KChar '^') []      -> curBeginning m >>= continue
+        EvKey (KChar '$') []      -> curEnd m       >>= continue
         EvKey (KChar 'y') [MCtrl] -> scroll ( -1) m >>= continue
         EvKey (KChar 'e') [MCtrl] -> scroll (  1) m >>= continue
         EvKey (KChar 'u') [MCtrl] -> scroll (-15) m >>= continue
