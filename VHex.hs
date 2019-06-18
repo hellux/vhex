@@ -173,10 +173,9 @@ curHori n m = return
 curVert :: Int -> Model e -> EventM ResourceName (Model e)
 curVert n m = viewportSize >>= curVert' where
     curVert' (w, _) = let step = bytesPerRow w (fileLength m)
-                          newPos = (cursorPos m) + n*step
-                          allowed = 0 <= newPos && newPos < fileLength m
+                          newPos = min (fileLength m - 1) $ (cursorPos m) + n*step
                       in return
-                        m { cursorPos = if allowed
+                        m { cursorPos = if 0 <= newPos
                                             then newPos
                                             else cursorPos m }
 
