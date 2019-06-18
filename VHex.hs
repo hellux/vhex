@@ -104,15 +104,15 @@ openFile path m = do
     len <- fmap (fromIntegral . fileSize) (getFileStatus path)
     return m { filePath = path, fileContents = contents, fileLength = len }
 
-viewportDims :: EventM ResourceName (Int, Int)
-viewportDims = do
+viewportSize :: EventM ResourceName (Int, Int)
+viewportSize = do
     extent <- lookupExtent EditorViewPort
     case extent of
         Nothing -> return (0, 0)
         Just (Extent _ _ dims _) -> return dims
 
 scroll :: Int -> Model e -> EventM ResourceName (Model e)
-scroll n m = viewportDims >>= scroll' where
+scroll n m = viewportSize >>= scroll' where
     scroll' (w, _) = return
         m { scrollPos = let perRow = bytesPerRow w m
                             prev = scrollPos m
@@ -120,7 +120,7 @@ scroll n m = viewportDims >>= scroll' where
                         in min (max 0 (prev + n*perRow)) maxPos }
 
 scrollBottom :: Model e -> EventM ResourceName (Model e)
-scrollBottom m = viewportDims >>= scrollBottom' where
+scrollBottom m = viewportSize >>= scrollBottom' where
     scrollBottom' (w, h) = return $
         let perRow = bytesPerRow w m
             maxPos = fileLength m - 1
@@ -133,8 +133,8 @@ curHori :: Int -> Model e -> EventM ResourceName (Model e)
 curHori n m = return m { cursorPos = (cursorPos m) + n }
 
 curVert :: Int -> Model e -> EventM ResourceName (Model e)
-curVert n m = viewportDims >>= curRight' where
-    curRight' (w, _) = let step = bytesPerRow w m
+curVert n m = viewportSize >>= curVert' where
+    curVert' (w, _) = let step = bytesPerRow w m
                        in return m { cursorPos = (cursorPos m) + step*n }
 
 normalMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
@@ -224,11 +224,11 @@ groupsOf n xs = let (y,ys) = splitAt n xs
                in y : groupsOf n ys
 
 viewOffset :: Int -> Int -> Int -> Int -> Int -> Widget ResourceName
-viewOffset start step selected maxOffset rowCount = vBox rows where
+viewOffset start step selected maxAddr rowCount = vBox rows where
     rows = [ withAttr attr
              $ str
-             $ if offset <= maxOffset
-                then (toHex (hexLength maxOffset) offset)
+             $ if offset <= maxAddr
+                then (toHex (hexLength maxAddr) offset)
                 else "~"
             | r <- [0..rowCount],
               let offset = start + r*step,
