@@ -11,7 +11,7 @@ import Data.Char (chr)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BL
 
-import Graphics.Vty.Input.Events
+import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(..))
 import qualified Graphics.Vty as VTY
 
 import Lens.Micro ((^.))
@@ -29,19 +29,29 @@ data ResourceName = EditorViewPort
                   | HexCursor
                   deriving (Show, Eq, Ord)
 
+data Mode = NormalMode
+          | InsertMode
+          | ReplaceMode
+          | VisualMode
+
 data CmdLineMode = CmdNone
                  | CmdEx
                  | CmdSearch
                  deriving (Show)
 
+data BytePart = FullByte | LowerNibble | UpperNibble
+
 data Model e = Model
     { filePath :: FilePath
     , fileContents :: ByteString
     , fileLength :: Int
-    , cursorPos :: Int
-    , scrollPos :: Int
+    , cursorPos :: Int              -- offset to selected byte
+    , cursorSelection :: BytePart
+    , scrollPos :: Int              -- offset to visible top left byte
+    , mode :: Mode
     , cmdMode :: CmdLineMode
     , cmdForm :: Form T.Text e ResourceName
+    , perRow :: Int
     }
 
 bytesPerRowMultiple :: Int
@@ -73,13 +83,20 @@ initialModel = Model
     { filePath = ""
     , fileContents = BL.empty
     , fileLength = 0
+    , cursorPos = 0
+    , cursorSelection = FullByte
+    , scrollPos = 0
+    , mode = NormalMode
     , cmdMode = CmdNone
     , cmdForm = newForm
         [(str ":" <+>) @@= editTextField id CmdExLine (Just 1)]
         T.empty
-    , cursorPos = 0
-    , scrollPos = 0
+    , perRow = 0
     }
+
+bytesPerRow :: Int -> Model e -> Int
+bytesPerRow w m = max 1 $ maxBytes - (mod maxBytes bytesPerRowMultiple)
+    where maxBytes = div (w-(hexLength (fileLength m))-1) 4
 
 openFile :: FilePath -> Model e -> IO (Model e)
 openFile path m = do
@@ -94,19 +111,21 @@ viewportDims = do
         Nothing -> return (0, 0)
         Just (Extent _ _ dims _) -> return dims
 
--- TODO replace scrollPos with line no
 scroll :: Int -> Model e -> EventM ResourceName (Model e)
 scroll n m = viewportDims >>= scroll' where
-    scroll' (w, h) = return
-        m { scrollPos = let perRow = bytesPerRow w m
+    scroll' (w, _) = return
+        m { perRow = w,
+            scrollPos = let perRow = bytesPerRow w m
                             prev = scrollPos m
-                            maxPos = max 0 ((fileLength m) - perRow*h)
-                        in min (max 0 (n*perRow+prev)) maxPos }
+                            maxPos = floorN perRow (fileLength m - 1)
+                        in min (max 0 (prev + n*perRow)) maxPos }
 
 scrollBottom :: Model e -> EventM ResourceName (Model e)
 scrollBottom m = viewportDims >>= scrollBottom' where
-    scrollBottom' (w, h) = return
-        m { scrollPos = max 0 $ (fileLength m) - (bytesPerRow w m)*h }
+    scrollBottom' (w, h) = return $
+        let perRow = bytesPerRow w m
+            maxPos = fileLength m - 1
+        in m { scrollPos = max 0 $ ceilN perRow (maxPos - perRow*h) }
 
 scrollTop :: Model e -> EventM ResourceName (Model e)
 scrollTop m = return m { scrollPos = 0 }
@@ -160,6 +179,7 @@ update m e =
                 CmdSearch -> continue m
         _ -> continue m
 
+-- character length of hex representation of number
 hexLength :: Int -> Int
 hexLength = ceiling . (logBase 16) . (fromIntegral :: Int -> Double)
 
@@ -176,15 +196,29 @@ toAscii w
     | w < 32 || w > 126 = "."
     | otherwise = [chr $ fromIntegral w]
 
-bytesPerRow :: Int -> Model e -> Int
-bytesPerRow w m = max 1 $ maxBytes - (mod maxBytes bytesPerRowMultiple) where
-    maxBytes = div (w-(hexLength (fileLength m))-1) 4
+-- round down to closes multiple of n
+floorN :: Int -> Int -> Int
+floorN n x = x - (mod x n)
 
+ceilN :: Int -> Int -> Int
+ceilN n x
+    | mod x n == 0 = x
+    | otherwise    = floorN n x + n
+
+-- fill xs with p until length is n
+padOut :: Int -> a -> [a] -> [a]
+padOut n p xs
+    | len < n = xs ++ replicate (n-len) p
+    | otherwise = xs
+    where len = length xs
+
+-- place i between every two elements in xs
 interleave :: a -> [a] -> [a]
 interleave _ [] = []
 interleave _ [x] = [x]
 interleave i (x:xs) = x : i : interleave i xs
 
+-- split xs into lists with length n
 groupsOf :: Int -> [a] -> [[a]]
 groupsOf _ [] = []
 groupsOf n xs = let (y,ys) = splitAt n xs
@@ -211,12 +245,14 @@ viewHex bytes perRow selectedRow = vBox rows where
                       in withAttr attr (str row)
     rows = zipWith widgetize [0..]
          $ fmap (concat . (interleave " "))
+         $ fmap (padOut perRow "  ")
          $ groupsOf perRow (fmap ((toHex 2) . fromIntegral) bytes)
 
 viewAscii :: [Word8] -> Int -> Widget ResourceName
 viewAscii bytes perRow = vBox rows where
     rows = fmap str
          $ fmap concat
+         $ fmap (padOut perRow " ")
          $ groupsOf perRow (fmap toAscii bytes)
 
 viewEditor :: Model e -> Widget ResourceName
@@ -236,7 +272,7 @@ viewEditor m = Widget Greedy Greedy $ do
             $ viewAddr (scrollPos m)
                        perRow
                        selectedRow
-                       (fileLength m)
+                       (fileLength m - 1)
                        rowCount
         , withAttr attrDef
             $ viewHex bytes perRow selectedRow
@@ -250,15 +286,13 @@ viewCmdLine m =
     case cmdMode m of
         CmdNone -> str $ filePath m ++ ": "
                       ++ show (cursorPos m) ++ ", "
-                      ++ show (scrollPos m)
+                      ++ show (scrollPos m) ++ "  "
+                      ++ show (perRow m)
         CmdEx -> renderForm $ cmdForm m
         CmdSearch -> str " "
 
 view :: Model e -> [Widget ResourceName]
-view m = [
-    padBottom Max (viewEditor m) <=>
-    viewCmdLine m
-    ]
+view m = [ padBottom Max (viewEditor m) <=> viewCmdLine m ]
 
 app :: App (Model e) e ResourceName
 app = App { appDraw = view
