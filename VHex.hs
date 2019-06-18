@@ -246,8 +246,10 @@ viewOffset start step selected maxAddr rowCount = vBox rows where
               let attr = if r == selected then attrOffsetSel else attrOffset
            ]
 
-viewHex :: [Word8] -> Int -> Int -> Int -> Widget ResourceName
-viewHex bytes perRow selectedRow selectedCol = vBox rows where
+viewBytes :: [Word8] -> (Word8 -> String) -> Int
+          -> Int -> Int -> Widget ResourceName
+viewBytes bytes display perRow
+          selectedRow selectedCol = vBox rows where
     styleCol (r, c) col = if c == selectedCol && r == selectedRow
                             then withAttr attrDefSelCol col
                             else col
@@ -255,24 +257,17 @@ viewHex bytes perRow selectedRow selectedCol = vBox rows where
                                     then attrDefSelRow
                                     else attrDef
                      in withAttr attr row
-    space = str " "
-    emptyByte = str "  "
+    width = textWidth (display 0)
+    space = if width > 1 then str " " else emptyWidget
+    emptyByte = str $ replicate width ' '
     rows = ( zipWith styleRow [0..]
            . fmap hBox
            . fmap (interleave space)
            . fmap (padOut perRow emptyByte)
            . groupsOf perRow
            . zipWith styleCol [ (div i perRow, mod i perRow) | i <- [0..] ]
-           . fmap str
-           . fmap ((toHex 2) . fromIntegral)
+           . fmap (str . display)
            ) bytes
-
-viewAscii :: [Word8] -> Int -> Widget ResourceName
-viewAscii bytes perRow = vBox rows where
-    rows = fmap str
-         $ fmap concat
-         $ fmap (padOut perRow " ")
-         $ groupsOf perRow (fmap toAscii bytes)
 
 viewEditor :: Model e -> Widget ResourceName
 viewEditor m = Widget Greedy Greedy $ do
@@ -295,9 +290,11 @@ viewEditor m = Widget Greedy Greedy $ do
                        rowCount
         , withAttr attrDef
             $ padLeftRight 2
-            $ viewHex bytes perRow selectedRow selectedCol
+            $ viewBytes bytes (toHex 2 . fromIntegral)
+                        perRow selectedRow selectedCol
         , withAttr attrDef
-            $ viewAscii bytes perRow
+            $ viewBytes bytes toAscii
+                        perRow selectedRow selectedCol
         ]
 
 viewCmdLine :: Model e -> Widget ResourceName
