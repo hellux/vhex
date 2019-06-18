@@ -29,29 +29,30 @@ data ResourceName = EditorViewPort
                   | HexCursor
                   deriving (Show, Eq, Ord)
 
+{-
 data Mode = NormalMode
           | InsertMode
           | ReplaceMode
           | VisualMode
+-}
 
 data CmdLineMode = CmdNone
                  | CmdEx
                  | CmdSearch
                  deriving (Show)
 
-data BytePart = FullByte | LowerNibble | UpperNibble
+--data BytePart = FullByte | LowerNibble | UpperNibble
 
 data Model e = Model
     { filePath :: FilePath
     , fileContents :: ByteString
     , fileLength :: Int
     , cursorPos :: Int              -- offset to selected byte
-    , cursorSelection :: BytePart
+--    , cursorSelection :: BytePart
     , scrollPos :: Int              -- offset to visible top left byte
-    , mode :: Mode
+--    , mode :: Mode
     , cmdMode :: CmdLineMode
     , cmdForm :: Form T.Text e ResourceName
-    , perRow :: Int
     }
 
 bytesPerRowMultiple :: Int
@@ -84,14 +85,13 @@ initialModel = Model
     , fileContents = BL.empty
     , fileLength = 0
     , cursorPos = 0
-    , cursorSelection = FullByte
+--    , cursorSelection = FullByte
     , scrollPos = 0
-    , mode = NormalMode
+--    , mode = NormalMode
     , cmdMode = CmdNone
     , cmdForm = newForm
         [(str ":" <+>) @@= editTextField id CmdExLine (Just 1)]
         T.empty
-    , perRow = 0
     }
 
 bytesPerRow :: Int -> Model e -> Int
@@ -114,8 +114,7 @@ viewportDims = do
 scroll :: Int -> Model e -> EventM ResourceName (Model e)
 scroll n m = viewportDims >>= scroll' where
     scroll' (w, _) = return
-        m { perRow = w,
-            scrollPos = let perRow = bytesPerRow w m
+        m { scrollPos = let perRow = bytesPerRow w m
                             prev = scrollPos m
                             maxPos = floorN perRow (fileLength m - 1)
                         in min (max 0 (prev + n*perRow)) maxPos }
@@ -287,7 +286,6 @@ viewCmdLine m =
         CmdNone -> str $ filePath m ++ ": "
                       ++ show (cursorPos m) ++ ", "
                       ++ show (scrollPos m) ++ "  "
-                      ++ show (perRow m)
         CmdEx -> renderForm $ cmdForm m
         CmdSearch -> str " "
 
