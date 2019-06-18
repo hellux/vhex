@@ -61,19 +61,19 @@ bytesPerRowMultiple = 4
 -- attributes
 attrDef        :: AttrName
 attrDefSelLine :: AttrName
-attrAddr       :: AttrName
-attrAddrSel    :: AttrName
-attrDef         = attrName "def"
-attrDefSelLine  = attrName "defSelLine"
-attrAddr        = attrName "addr"
-attrAddrSel     = attrName "addrSel"
+attrOffset     :: AttrName
+attrOffsetSel  :: AttrName
+attrDef        = attrName "def"
+attrDefSelLine = attrName "defSelLine"
+attrOffset     = attrName "offset"
+attrOffsetSel  = attrName "offsetSel"
 
 attributes :: AttrMap
 attributes = attrMap mempty
     [ (attrDef,        BU.fg fg)
     , (attrDefSelLine, BU.bg grey23)
-    , (attrAddr,       BU.fg grey)
-    , (attrAddrSel,    yellow `BU.on` grey23)
+    , (attrOffset,     BU.fg grey)
+    , (attrOffsetSel,  yellow `BU.on` grey23)
     ] where grey23 = VTY.rgbColor (58::Int) (58::Int) (58::Int)
             fg = VTY.brightWhite
             grey = VTY.brightBlack
@@ -223,17 +223,16 @@ groupsOf _ [] = []
 groupsOf n xs = let (y,ys) = splitAt n xs
                in y : groupsOf n ys
 
-viewAddr :: Int -> Int -> Int -> Int -> Int -> Widget ResourceName
-viewAddr start step selected maxAddr rowCount = vBox rows where
-    addrLength = hexLength maxAddr
+viewOffset :: Int -> Int -> Int -> Int -> Int -> Widget ResourceName
+viewOffset start step selected maxOffset rowCount = vBox rows where
     rows = [ withAttr attr
              $ str
-             $ if addr <= maxAddr
-                then (toHex addrLength addr)
+             $ if offset <= maxOffset
+                then (toHex (hexLength maxOffset) offset)
                 else "~"
             | r <- [0..rowCount],
-              let addr = start+step*r,
-              let attr = if r == selected then attrAddrSel else attrAddr
+              let offset = start + r*step,
+              let attr = if r == selected then attrOffsetSel else attrOffset
            ]
 
 viewHex :: [Word8] -> Int -> Int -> Widget ResourceName
@@ -266,9 +265,9 @@ viewEditor m = Widget Greedy Greedy $ do
                 in BL.unpack $ visibleBytes
     let selectedRow = div ((cursorPos m) - (scrollPos m)) perRow
     render $ reportExtent EditorViewPort $ hBox
-        [ withAttr attrAddr
+        [ withAttr attrOffset
             $ padRight (Pad 2)
-            $ viewAddr (scrollPos m)
+            $ viewOffset (scrollPos m)
                        perRow
                        selectedRow
                        (fileLength m - 1)
