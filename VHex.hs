@@ -302,8 +302,8 @@ viewBytes bytes perRow selectedRow selectedCol bv = vBox rows where
     space = str $ replicate (spaceWidth bv) ' '
     rows = ( zipWith styleRow [0..]
            . fmap hBox
-           . fmap (intersperse space)
            . fmap ((str "  ") :)
+           . fmap (intersperse space)
            . fmap (padOut perRow emptyByte)
            . groupsOf perRow
            . zipWith styleCol [ (div i perRow, mod i perRow) | i <- [0..] ]
@@ -329,7 +329,7 @@ viewEditor m = Widget Greedy Greedy $ do
     render
         $ reportExtent EditorViewPort
         $ hBox
-        $ offset : views
+        $ offset : views ++ [ withAttr attrDef $ fill ' ' ]
 
 viewStatusBar :: Model e -> Widget ResourceName
 viewStatusBar m = withAttr attrStatusBar $ str $
