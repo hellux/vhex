@@ -50,6 +50,7 @@ data Model e = Model
     , fileLength :: Int
     , cursorPos :: Int              -- offset to selected byte
 --    , cursorSelection :: BytePart
+    , cursorFocus :: Int            -- focused view by index
     , scrollPos :: Int              -- offset to visible top left byte
 --    , mode :: Mode
     , cmdMode :: CmdLineMode
@@ -69,12 +70,14 @@ layout = [ hex, ascii1 ]
 attrDef :: AttrName
 attrCursorLine :: AttrName
 attrSelected :: AttrName
+attrSelectedFocused :: AttrName
 attrOffset :: AttrName
 attrOffsetCursorLine :: AttrName
 attrStatusBar :: AttrName
 attrDef = attrName "def"
 attrCursorLine = attrName "cursorLine"
 attrSelected = attrName "selected"
+attrSelectedFocused = attrName "selectedFocused"
 attrOffset = attrName "offset"
 attrOffsetCursorLine = attrName "offsetCursorLine"
 attrStatusBar = attrName "statusbar"
@@ -83,7 +86,8 @@ attributes :: AttrMap
 attributes = attrMap mempty
     [ (attrDef, BU.fg fg)
     , (attrCursorLine, BU.bg grey23)
-    , (attrSelected, bg `BU.on` fg)
+    , (attrSelected, BU.bg grey23 `VTY.withStyle` VTY.underline)
+    , (attrSelectedFocused, bg `BU.on` fg)
     , (attrOffset, BU.fg grey)
     , (attrOffsetCursorLine, yellow `BU.on` grey23)
     , (attrStatusBar, BU.bg grey30)
@@ -124,6 +128,7 @@ initialModel = Model
     , fileLength = 0
     , cursorPos = 0
 --    , cursorSelection = FullByte
+    , cursorFocus = 0
     , scrollPos = 0
 --    , mode = NormalMode
     , cmdMode = CmdNone
@@ -196,6 +201,14 @@ curEnd m = viewportSize >>= curEnd' where
                      in return
                         m { cursorPos = min lineEnd (fileLength m - 1) }
 
+focusNext :: Model e -> EventM ResourceName (Model e)
+focusNext m = return
+    m { cursorFocus = mod (cursorFocus m + 1) (length layout) }
+
+focusPrev :: Model e -> EventM ResourceName (Model e)
+focusPrev m = return
+    m { cursorFocus = mod (cursorFocus m - 1) (length layout) }
+
 normalMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
 normalMode m vtye =
     case vtye of
@@ -206,6 +219,8 @@ normalMode m vtye =
         EvKey (KChar '0') []      -> curBeginning m >>= continue
         EvKey (KChar '^') []      -> curBeginning m >>= continue
         EvKey (KChar '$') []      -> curEnd m       >>= continue
+        EvKey (KChar '\t') []     -> focusNext m    >>= continue
+        EvKey (KBackTab) []       -> focusPrev m    >>= continue
         EvKey (KChar 'y') [MCtrl] -> scroll ( -1) m >>= continue
         EvKey (KChar 'e') [MCtrl] -> scroll (  1) m >>= continue
         EvKey (KChar 'u') [MCtrl] -> scroll (-15) m >>= continue
@@ -288,10 +303,17 @@ viewOffset start step selected maxAddr rowCount = vBox rows where
            . fmap display
            ) [start, start+step..]
 
-viewBytes :: [Word8] -> Int -> Int -> Int -> ByteView -> Widget ResourceName
-viewBytes bytes perRow selectedRow selectedCol bv = vBox rows where
+viewBytes :: [Word8] -> Int
+          -> (Int, Int)
+          -> (Bool, ByteView)
+          -> Widget ResourceName
+viewBytes bytes perRow
+          (selectedRow, selectedCol)
+          (focused, bv) = vBox rows where
     styleCol (r, c) col = if c == selectedCol && r == selectedRow
-                            then withAttr attrSelected col
+                            then if focused
+                                    then withAttr attrSelectedFocused col
+                                    else withAttr attrSelected col
                             else col
     styleRow r row = let attr = if enableCursorLine && r == selectedRow
                                     then attrCursorLine
@@ -325,7 +347,9 @@ viewEditor m = Widget Greedy Greedy $ do
     let offset = withAttr attrOffset
                $ viewOffset (scrollPos m) perRow selectedRow
                              (fileLength m - 1) rowCount
-    let views = map (viewBytes bytes perRow selectedRow selectedCol) layout
+    let focused = map (\i -> i == (cursorFocus m)) [0..] :: [Bool]
+    let views = map (viewBytes bytes perRow (selectedRow, selectedCol))
+                    (zip focused layout)
     render
         $ reportExtent EditorViewPort
         $ hBox
