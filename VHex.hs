@@ -7,6 +7,7 @@ import qualified Data.Text as T
 import Data.Bits ((.&.), shiftR, shiftL)
 import Data.Word (Word8)
 import Data.Char (chr)
+import Data.List (intersperse)
 
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BL
@@ -44,7 +45,7 @@ data CmdLineMode = CmdNone
 data ByteView = ByteView {
     fromWord :: Word8 -> String,
     toWord :: String -> Word8,
-    space :: Int
+    spaceWidth :: Int
 }
 
 displayWidth :: ByteView -> Int
@@ -54,14 +55,14 @@ hex :: ByteView
 hex = ByteView {
     fromWord = (toHex 2) . fromIntegral,
     toWord = undefined,
-    space = 1
+    spaceWidth = 1
 }
 
 ascii1 :: ByteView
 ascii1 = ByteView {
     fromWord = \w -> if w < 32 || w > 126 then "." else [chr $ fromIntegral w],
     toWord = undefined,
-    space = 0
+    spaceWidth = 0
 }
 
 --data BytePart = FullByte | LowerNibble | UpperNibble
@@ -131,7 +132,7 @@ initialModel = Model
 bytesPerRow :: Int -> Int -> Int
 bytesPerRow w byteCount = max 1 $ floorN bytesPerRowMultiple maxBytes where
     offsetWidth = hexLength $ byteCount - 1
-    linWidth = sum $ map ((+) <$> displayWidth <*> space) layout
+    linWidth = sum $ map ((+) <$> displayWidth <*> spaceWidth) layout
     padding = length layout - 1
     maxBytes = div (w - offsetWidth - padding) linWidth
 
@@ -265,12 +266,6 @@ padOut n p xs
     | otherwise = xs
     where len = length xs
 
--- place i between every two elements in xs
-interleave :: a -> [a] -> [a]
-interleave _ [] = []
-interleave _ [x] = [x]
-interleave i (x:xs) = x : i : interleave i xs
-
 -- split xs into lists with length n
 groupsOf :: Int -> [a] -> [[a]]
 groupsOf _ [] = []
@@ -299,9 +294,10 @@ viewBytes bytes perRow selectedRow selectedCol bv = vBox rows where
                      in withAttr attr row
     width = displayWidth bv
     emptyByte = str $ replicate width ' '
+    space = str $ replicate (spaceWidth bv) ' '
     rows = ( zipWith styleRow [0..]
            . fmap hBox
-           . fmap (interleave (str (replicate (space bv) ' ')))
+           . fmap (intersperse space)
            . fmap ((str "  ") :)
            . fmap (padOut perRow emptyByte)
            . groupsOf perRow
