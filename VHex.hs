@@ -42,6 +42,58 @@ data CmdLineMode = CmdNone
                  | CmdSearch
                  deriving (Show)
 
+--data BytePart = FullByte | LowerNibble | UpperNibble
+
+data Model e = Model
+    { filePath :: FilePath
+    , fileContents :: ByteString
+    , fileLength :: Int
+    , cursorPos :: Int              -- offset to selected byte
+--    , cursorSelection :: BytePart
+    , scrollPos :: Int              -- offset to visible top left byte
+--    , mode :: Mode
+    , cmdMode :: CmdLineMode
+    , cmdForm :: Form T.Text e ResourceName
+    }
+
+bytesPerRowMultiple :: Int
+bytesPerRowMultiple = 4
+
+enableCursorLine :: Bool
+enableCursorLine = True
+
+layout :: [ByteView]
+layout = [ hex, ascii1 ]
+
+-- attributes
+attrDef :: AttrName
+attrCursorLine :: AttrName
+attrSelected :: AttrName
+attrOffset :: AttrName
+attrOffsetCursorLine :: AttrName
+attrStatusBar :: AttrName
+attrDef = attrName "def"
+attrCursorLine = attrName "cursorLine"
+attrSelected = attrName "selected"
+attrOffset = attrName "offset"
+attrOffsetCursorLine = attrName "offsetCursorLine"
+attrStatusBar = attrName "statusbar"
+
+attributes :: AttrMap
+attributes = attrMap mempty
+    [ (attrDef, BU.fg fg)
+    , (attrCursorLine, BU.bg grey23)
+    , (attrSelected, bg `BU.on` fg)
+    , (attrOffset, BU.fg grey)
+    , (attrOffsetCursorLine, yellow `BU.on` grey23)
+    , (attrStatusBar, BU.bg grey30)
+    ] where fg = VTY.brightWhite
+            bg = VTY.black
+            grey = VTY.brightBlack
+            yellow = VTY.brightYellow
+            grey23 = VTY.rgbColor (58::Int) (58::Int) (58::Int)
+            grey30 = VTY.rgbColor (78::Int) (78::Int) (78::Int)
+
 data ByteView = ByteView {
     fromWord :: Word8 -> String,
     toWord :: String -> Word8,
@@ -64,55 +116,6 @@ ascii1 = ByteView {
     toWord = undefined,
     spaceWidth = 0
 }
-
---data BytePart = FullByte | LowerNibble | UpperNibble
-
-data Model e = Model
-    { filePath :: FilePath
-    , fileContents :: ByteString
-    , fileLength :: Int
-    , cursorPos :: Int              -- offset to selected byte
---    , cursorSelection :: BytePart
-    , scrollPos :: Int              -- offset to visible top left byte
---    , mode :: Mode
-    , cmdMode :: CmdLineMode
-    , cmdForm :: Form T.Text e ResourceName
-    }
-
-bytesPerRowMultiple :: Int
-bytesPerRowMultiple = 4
-
-layout :: [ByteView]
-layout = [ hex, ascii1 ]
-
--- attributes
-attrDef :: AttrName
-attrDefSelRow :: AttrName
-attrDefSelCol :: AttrName
-attrOffset :: AttrName
-attrOffsetSel :: AttrName
-attrStatusBar :: AttrName
-attrDef = attrName "def"
-attrDefSelRow = attrName "defSelRow"
-attrDefSelCol = attrName "defSelCol"
-attrOffset = attrName "offset"
-attrOffsetSel = attrName "offsetSel"
-attrStatusBar = attrName "statusbar"
-
-attributes :: AttrMap
-attributes = attrMap mempty
-    [ (attrDef, BU.fg fg)
-    , (attrDefSelRow, BU.bg grey23)
-    , (attrDefSelCol, bg `BU.on` fg)
-    , (attrOffset, BU.fg grey)
-    , (attrOffsetSel, yellow `BU.on` grey23)
-    , (attrStatusBar, BU.bg grey30)
-    ] where fg = VTY.brightWhite
-            bg = VTY.black
-            grey = VTY.brightBlack
-            yellow = VTY.brightYellow
-            grey23 = VTY.rgbColor (58::Int) (58::Int) (58::Int)
-            grey30 = VTY.rgbColor (78::Int) (78::Int) (78::Int)
 
 initialModel :: Model e
 initialModel = Model
@@ -274,7 +277,9 @@ groupsOf n xs = let (y,ys) = splitAt n xs
 
 viewOffset :: Int -> Int -> Int -> Int -> Int -> Widget ResourceName
 viewOffset start step selected maxAddr rowCount = vBox rows where
-    styleRow r = if r == selected then attrOffsetSel else attrOffset
+    styleRow r = if enableCursorLine && r == selected
+                    then attrOffsetCursorLine
+                    else attrOffset
     display offset = if offset <= maxAddr
                         then toHex (hexLength maxAddr) offset
                         else "~"
@@ -286,10 +291,10 @@ viewOffset start step selected maxAddr rowCount = vBox rows where
 viewBytes :: [Word8] -> Int -> Int -> Int -> ByteView -> Widget ResourceName
 viewBytes bytes perRow selectedRow selectedCol bv = vBox rows where
     styleCol (r, c) col = if c == selectedCol && r == selectedRow
-                            then withAttr attrDefSelCol col
+                            then withAttr attrSelected col
                             else col
-    styleRow r row = let attr = if r == selectedRow
-                                    then attrDefSelRow
+    styleRow r row = let attr = if enableCursorLine && r == selectedRow
+                                    then attrCursorLine
                                     else attrDef
                      in withAttr attr row
     width = displayWidth bv
