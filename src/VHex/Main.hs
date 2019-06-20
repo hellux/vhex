@@ -1,3 +1,5 @@
+module VHex.Main (vhex) where
+
 import System.IO (FilePath)
 import System.Environment (getArgs)
 --import System.Posix (getFileStatus, fileSize)
@@ -26,8 +28,8 @@ import qualified Brick.Util as BU
 import Brick.Forms
 import Brick.Widgets.Core
 
-import Data.Buffer (Buffer)
-import qualified Data.Buffer as Buf
+import VHex.Buffer (Buffer)
+import qualified VHex.Buffer as Buf
 
 data ResourceName = EditorViewPort
                   | CmdExLine
@@ -497,10 +499,11 @@ app = App { appDraw = view
           , appAttrMap = const attributes
           }
 
-main :: IO (Model e)
-main = do
+vhex :: IO ()
+vhex = do
     args <- getArgs
     initial <- if length args > 0
                 then openFile (args !! 0) initialModel
                 else return initialModel
-    defaultMain app initial
+    _ <- defaultMain app initial
+    return ()

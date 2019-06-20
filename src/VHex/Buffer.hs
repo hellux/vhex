@@ -1,4 +1,4 @@
-module Data.Buffer
+module VHex.Buffer
 ( Buffer
 , empty, singleton, buffer
 , selected, selectedValue, selectedIndex, length
