@@ -6,8 +6,10 @@ import qualified Data.Text as T
 
 import Data.Bits ((.&.), shiftR, shiftL)
 import Data.Word (Word8)
-import Data.Char (chr)
-import Data.List (intersperse)
+import Data.Char (chr, ord, toLower)
+import Data.List (elemIndex, intersperse)
+
+import Control.Monad (liftM2)
 
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BL
@@ -15,7 +17,7 @@ import qualified Data.ByteString.Lazy as BL
 import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(..))
 import qualified Graphics.Vty as VTY
 
-import Lens.Micro ((^.))
+import Lens.Micro ((.~), (&), (^.), ix)
 
 import Brick.Main
 import Brick.AttrMap (AttrMap, attrMap, AttrName, attrName)
@@ -33,10 +35,8 @@ data ResourceName = EditorViewPort
                   | Cursor
                   deriving (Show, Eq, Ord)
 
-type WordInput = (String, Int)
-
 data Mode = NormalMode
-          | ReplaceMode WordInput
+          | ReplaceMode
 --        | InsertMode
 
 data CmdLineMode = CmdNone
@@ -50,6 +50,7 @@ data Model e = Model
     , buffer :: Buffer
     , cursorFocus :: Int            -- focused view by index
     , scrollPos :: Int              -- offset to visible top left byte
+    , inputCursor :: Maybe Int
     , mode :: Mode
     , cmdMode :: CmdLineMode
     , cmdForm :: Form T.Text e ResourceName
@@ -68,6 +69,9 @@ cursorVal m = case Buf.selectedValue (buffer m) of
     Nothing -> 0
     Just value -> value
 
+bvFocused :: Model e -> ByteView
+bvFocused m = layout !! (cursorFocus m)
+
 bytesPerRowMultiple :: Int
 bytesPerRowMultiple = 4
 
@@ -75,7 +79,7 @@ enableCursorLine :: Bool
 enableCursorLine = True
 
 layout :: [ByteView]
-layout = [ hex, ascii1 ]
+layout = [ hex, ascii1 ] -- TODO mv to model
 
 -- attributes
 attrDef :: AttrName
@@ -114,7 +118,7 @@ attributes = attrMap mempty
 
 data ByteView = ByteView {
     fromWord :: Word8 -> String,
-    toWord :: String -> Word8,
+    toWord :: String -> Maybe Word8,
     spaceWidth :: Int
 }
 
@@ -124,7 +128,7 @@ displayWidth bv = textWidth $ (fromWord bv) 0
 hex :: ByteView
 hex = ByteView
     { fromWord = (toHex 2) . fromIntegral
-    , toWord = undefined
+    , toWord = fmap fromIntegral . fromHex
     , spaceWidth = 1
     }
 
@@ -133,7 +137,9 @@ ascii1 = ByteView
     { fromWord = \w -> if w < 32 || w > 126
                         then "."
                         else [chr $ fromIntegral w]
-    , toWord = undefined
+    , toWord = \w -> case w of
+                        [] -> Just 0
+                        (c:_) -> Just $ fromIntegral $ ord c
     , spaceWidth = 0
     }
 
@@ -144,6 +150,7 @@ initialModel = Model
     , buffer = Buf.empty
     , cursorFocus = 0
     , scrollPos = 0
+    , inputCursor = Nothing
     , mode = NormalMode
     , cmdMode = CmdNone
     , cmdForm = newForm
@@ -266,32 +273,49 @@ normalMode m vtye = case vtye of
     EvKey (KChar ':') []      -> continue m { cmdMode = CmdEx}
     _ -> continue m
 
+enterNormalMode :: Model e -> Model e
+enterNormalMode m = m { mode = NormalMode }
+
 enterReplaceMode :: Model e -> Model e
-enterReplaceMode m = case Buf.selectedValue (buffer m) of
-    Nothing -> m { buffer = Buf.singleton 0
-                 , mode = ReplaceMode (toString 0, 0) }
-    Just w -> m { mode = ReplaceMode (toString w, 0) }
-    where toString = fromWord (layout !! (cursorFocus m))
+enterReplaceMode m =
+    case Buf.selectedValue (buffer m) of
+        Nothing -> m
+        Just _ -> m { mode = ReplaceMode
+                    , inputCursor = Just 0
+                    }
 
-inputCurHori :: Int -> Model e -> WordInput -> EventM ResourceName (Model e)
-inputCurHori d m (input, i) = do
-    let nextPos = i + d
-    if 0 < nextPos && nextPos < length input
-        then return m { mode = ReplaceMode (input, nextPos) }
-        else do
-            moved <- curHori d m
-            let nextByte = cursorVal moved
-            let nextInput = fromWord (layout !! (cursorFocus m)) nextByte
-            return moved { mode = ReplaceMode (nextInput, 0) }
+inputChar :: Char -> Model e -> EventM ResourceName (Model e)
+inputChar c m =
+    case inputCursor m >>= (fmap writeInput . writeToInput) of
+        Nothing -> return m
+        Just w -> inputCurHori 1 w
+    where
+        bv = bvFocused m
+        writeToInput :: Int -> Maybe Word8
+        writeToInput i = (toWord bv)
+                         $ ((fromWord bv) (cursorVal m)) & (ix i) .~ c
+        writeInput input = m { buffer = Buf.replace input (buffer m) }
 
-replaceMode :: Model e -> WordInput -> Event
+inputCurHori :: Int -> Model e -> EventM ResourceName (Model e)
+inputCurHori d m = case inputCursor m of
+        Nothing -> return m
+        Just i ->
+            if 0 < i+d && i+d < displayWidth (bvFocused m)
+                then return m { inputCursor = Just (i+d) }
+                else curHori d m { inputCursor = Just 0 }
+
+inputCurVert :: Int -> Model e -> EventM ResourceName (Model e)
+inputCurVert = curVert
+
+replaceMode :: Model e -> Event
             -> EventM ResourceName (Next (Model e))
-replaceMode m wi vtye = case vtye of
-    EvKey KLeft  [] -> inputCurHori (-1) m wi >>= continue
-    EvKey KDown  [] -> curVert ( 1) m         >>= continue
-    EvKey KUp    [] -> curVert (-1) m         >>= continue
-    EvKey KRight [] -> inputCurHori ( 1) m wi >>= continue
-    EvKey KEsc [] -> continue m { mode = NormalMode }
+replaceMode m vtye = case vtye of
+    EvKey (KChar c) [] -> inputChar c m    >>= continue
+    EvKey KLeft  [] -> inputCurHori (-1) m >>= continue
+    EvKey KDown  [] -> inputCurVert ( 1) m >>= continue
+    EvKey KUp    [] -> inputCurVert (-1) m >>= continue
+    EvKey KRight [] -> inputCurHori ( 1) m >>= continue
+    EvKey KEsc [] -> continue (enterNormalMode m)
     _ -> continue m
 
 {-
@@ -309,7 +333,7 @@ update m e = case e of
         NormalMode -> case cmdMode m of
             CmdEx -> updateExCmd m vtye
             CmdNone -> normalMode m vtye
-        ReplaceMode wi -> replaceMode m wi vtye
+        ReplaceMode -> replaceMode m vtye
 --      InsertMode -> insertmode m vtye
     _ -> continue m
 
@@ -317,11 +341,20 @@ update m e = case e of
 hexLength :: Int -> Int
 hexLength = ceiling . (logBase 16) . (fromIntegral :: Int -> Double)
 
+hexChars :: String
+hexChars = "0123456789abcdef"
+
+fromHex :: String -> Maybe Int
+fromHex [] = Just 0
+fromHex (h:ex) = ((*) size <$> digit) >+< (fromHex ex)
+    where (>+<) = liftM2 (+)
+          digit = elemIndex (toLower h) hexChars
+          size = foldl (*) 1 $ replicate (length ex) 16
+
 toHex :: Int -> Int -> String
 toHex 0 _ = ""
-toHex n d = c !! shifted : toHex (n-1) masked
-    where c = "0123456789abcdef"
-          s = 4*(n-1)
+toHex n d = hexChars !! shifted : toHex (n-1) masked
+    where s = 4*(n-1)
           shifted = (shiftR d s) .&. 0xf
           masked = d .&. ((shiftL 1 s)-1)
 
@@ -366,12 +399,12 @@ viewBytes :: [Word8] -> Int
           -> (Bool, ByteView)
           -> Widget ResourceName
 viewBytes bytes perRow
-          (selectedRow, selectedCol) cursorIndex
+          (selectedRow, selectedCol) wi
           (focused, bv) = vBox rows where
     styleCol (r, c) col =
         if c == selectedCol && r == selectedRow
             then if focused
-                then case cursorIndex of
+                then case wi of
                     Nothing -> withAttr attrSelectedFocused col
                     Just i -> showCursor Cursor (Location (i, 0)) col
                 else withAttr attrSelected col
@@ -407,11 +440,8 @@ viewEditor m = Widget Greedy Greedy $ do
                $ viewOffset (scrollPos m) perRow selectedRow
                             (bufferLength m - 1) rowCount
     let focused = map (\i -> i == (cursorFocus m)) [0..] :: [Bool]
-    let cursorIndex = case mode m of
-                        NormalMode -> Nothing
-                        ReplaceMode (_, i) -> Just i
     let views = map (viewBytes bytes perRow
-                               (selectedRow, selectedCol) cursorIndex)
+                               (selectedRow, selectedCol) (inputCursor m))
                     (zip focused layout)
     render
         $ reportExtent EditorViewPort
@@ -430,7 +460,7 @@ viewCmdLine m =
         CmdNone -> withAttr attrMode $ str $
             case mode m of
                 NormalMode -> " "
-                ReplaceMode _ -> "-- REPLACE --"
+                ReplaceMode -> "-- REPLACE --"
 --              InsertMode -> "-- INSERT --"
         CmdEx -> renderForm $ cmdForm m
 --      CmdSearch -> str " "
