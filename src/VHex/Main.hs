@@ -10,6 +10,7 @@ import Data.Bits ((.&.), shiftR, shiftL)
 import Data.Word (Word8)
 import Data.Char (chr, ord, toLower)
 import Data.List (elemIndex, intersperse)
+import Data.Maybe (fromMaybe)
 
 import Control.Monad (liftM2)
 
@@ -62,17 +63,13 @@ bufferLength :: Model e -> Int
 bufferLength = Buf.length . buffer
 
 cursorPos :: Model e -> Int
-cursorPos m = case Buf.selectedIndex (buffer m) of
-    Nothing -> 0
-    Just index -> index
+cursorPos m = fromMaybe 0 $ Buf.selectedIndex (buffer m)
 
 cursorVal :: Model e -> Word8
-cursorVal m = case Buf.selectedValue (buffer m) of
-    Nothing -> 0
-    Just value -> value
+cursorVal m = fromMaybe 0 $ Buf.selectedValue (buffer m)
 
 bvFocused :: Model e -> ByteView
-bvFocused m = layout !! (cursorFocus m)
+bvFocused m = layout !! cursorFocus m
 
 bytesPerRowMultiple :: Int
 bytesPerRowMultiple = 4
@@ -125,11 +122,11 @@ data ByteView = ByteView {
 }
 
 displayWidth :: ByteView -> Int
-displayWidth bv = textWidth $ (fromWord bv) 0
+displayWidth bv = textWidth $ fromWord bv 0
 
 hex :: ByteView
 hex = ByteView
-    { fromWord = (toHex 2) . fromIntegral
+    { fromWord = toHex 2 . fromIntegral
     , toWord = fmap fromIntegral . fromHex
     , spaceWidth = 1
     }
@@ -139,9 +136,9 @@ ascii1 = ByteView
     { fromWord = \w -> if w < 32 || w > 126
                         then "."
                         else [chr $ fromIntegral w]
-    , toWord = \w -> case w of
-                        [] -> Just 0
-                        (c:_) -> Just $ fromIntegral $ ord c
+    , toWord = \w -> if null w
+                        then Just 0
+                        else (Just . fromIntegral . ord . head) w
     , spaceWidth = 0
     }
 
@@ -203,13 +200,13 @@ scrollTop m = return m { scrollPos = 0 }
 
 curHori :: Int -> Model e -> EventM ResourceName (Model e)
 curHori n m = return m { buffer = Buf.moveTo newPos (buffer m) }
-    where newPos = BU.clamp 0 (bufferLength m -1) ((cursorPos m) + n)
+    where newPos = BU.clamp 0 (bufferLength m -1) (cursorPos m + n)
 
 curVert :: Int -> Model e -> EventM ResourceName (Model e)
 curVert n m = viewportSize >>= curVert' where
     curVert' (w, _) = let step = bytesPerRow w (bufferLength m)
                           newPos = min (bufferLength m - 1)
-                                       ((cursorPos m) + n*step)
+                                       (cursorPos m + n*step)
                           finalPos = if 0 <= newPos
                                         then newPos
                                         else cursorPos m
@@ -250,29 +247,29 @@ updateExCmd m vtye =
 
 normalMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
 normalMode m vtye = case vtye of
-    EvKey (KChar 'h') []      -> curHori (-1) m >>= continue
-    EvKey KLeft       []      -> curHori (-1) m >>= continue
-    EvKey (KChar 'j') []      -> curVert ( 1) m >>= continue
-    EvKey KDown       []      -> curVert ( 1) m >>= continue
-    EvKey (KChar 'k') []      -> curVert (-1) m >>= continue
-    EvKey KUp         []      -> curVert (-1) m >>= continue
-    EvKey (KChar 'l') []      -> curHori ( 1) m >>= continue
-    EvKey KRight      []      -> curHori ( 1) m >>= continue
-    EvKey (KChar '0') []      -> curBeginning m >>= continue
-    EvKey (KChar '^') []      -> curBeginning m >>= continue
-    EvKey (KChar '$') []      -> curEnd m       >>= continue
-    EvKey (KChar '\t') []     -> focusNext m    >>= continue
-    EvKey KBackTab    []      -> focusPrev m    >>= continue
-    EvKey (KChar 'y') [MCtrl] -> scroll ( -1) m >>= continue
-    EvKey (KChar 'e') [MCtrl] -> scroll (  1) m >>= continue
-    EvKey (KChar 'u') [MCtrl] -> scroll (-15) m >>= continue
-    EvKey (KChar 'd') [MCtrl] -> scroll ( 15) m >>= continue
-    EvKey (KChar 'g') []      -> scrollTop m    >>= continue
-    EvKey (KChar 'G') []      -> scrollBottom m >>= continue
-    EvKey (KChar 'q') []      -> halt m
-    EvKey (KChar 'r') []      -> continue (enterReplaceMode m)
-    EvKey (KChar 'i') []      -> continue (enterInsertMode m)
-    EvKey (KChar ':') []      -> continue m { cmdMode = CmdEx}
+    EvKey (KChar 'h')  []      -> curHori (-1) m >>= continue
+    EvKey KLeft        []      -> curHori (-1) m >>= continue
+    EvKey (KChar 'j')  []      -> curVert   1  m >>= continue
+    EvKey KDown        []      -> curVert   1  m >>= continue
+    EvKey (KChar 'k')  []      -> curVert (-1) m >>= continue
+    EvKey KUp          []      -> curVert (-1) m >>= continue
+    EvKey (KChar 'l')  []      -> curHori   1  m >>= continue
+    EvKey KRight       []      -> curHori   1  m >>= continue
+    EvKey (KChar '0')  []      -> curBeginning m >>= continue
+    EvKey (KChar '^')  []      -> curBeginning m >>= continue
+    EvKey (KChar '$')  []      -> curEnd       m >>= continue
+    EvKey (KChar '\t') []      -> focusNext    m >>= continue
+    EvKey KBackTab     []      -> focusPrev    m >>= continue
+    EvKey (KChar 'y')  [MCtrl] -> scroll ( -1) m >>= continue
+    EvKey (KChar 'e')  [MCtrl] -> scroll    1  m >>= continue
+    EvKey (KChar 'u')  [MCtrl] -> scroll (-15) m >>= continue
+    EvKey (KChar 'd')  [MCtrl] -> scroll   15  m >>= continue
+    EvKey (KChar 'g')  []      -> scrollTop    m >>= continue
+    EvKey (KChar 'G')  []      -> scrollBottom m >>= continue
+    EvKey (KChar 'q')  []      -> halt m
+    EvKey (KChar 'r')  []      -> continue (enterReplaceMode m)
+    EvKey (KChar 'i')  []      -> continue (enterInsertMode m)
+    EvKey (KChar ':')  []      -> continue m { cmdMode = CmdEx}
     _ -> continue m
 
 enterNormalMode :: Model e -> Model e
@@ -296,9 +293,9 @@ insertSelection :: Model e -> Word8 -> Model e
 insertSelection m w = m { buffer = Buf.insert w (buffer m) }
 
 setChar :: ByteView -> Word8 -> Char -> Int -> Maybe Word8
-setChar bv w c i = (toWord bv) modified
-    where current = (fromWord bv) w
-          modified = current & (ix i) .~ c
+setChar bv w c i = toWord bv modified
+    where current = fromWord bv w
+          modified = current & ix i .~ c
 
 replaceChar :: Char -> Model e -> EventM ResourceName (Model e)
 replaceChar c m =
@@ -306,7 +303,7 @@ replaceChar c m =
         Nothing -> return m
         Just m' -> inputCurHori 1 m'
     where bv = bvFocused m
-          replaceChar' = fmap (setSelection m) . (setChar bv (cursorVal m) c)
+          replaceChar' = fmap (setSelection m) . setChar bv (cursorVal m) c
 
 insertChar :: Char -> Model e -> EventM ResourceName (Model e)
 insertChar c m =
@@ -332,9 +329,9 @@ replaceMode :: Model e -> Event
 replaceMode m vtye = case vtye of
     EvKey (KChar c) [] -> replaceChar c m  >>= continue
     EvKey KLeft  [] -> inputCurHori (-1) m >>= continue
-    EvKey KDown  [] -> inputCurVert ( 1) m >>= continue
+    EvKey KDown  [] -> inputCurVert 1 m >>= continue
     EvKey KUp    [] -> inputCurVert (-1) m >>= continue
-    EvKey KRight [] -> inputCurHori ( 1) m >>= continue
+    EvKey KRight [] -> inputCurHori 1 m >>= continue
     EvKey KEsc [] -> continue (enterNormalMode m)
     _ -> continue m
 
@@ -343,9 +340,9 @@ insertMode :: Model e -> Event
 insertMode m vtye = case vtye of
     EvKey (KChar c) [] -> insertChar c m   >>= continue
     EvKey KLeft  [] -> inputCurHori (-1) m >>= continue
-    EvKey KDown  [] -> inputCurVert ( 1) m >>= continue
+    EvKey KDown  [] -> inputCurVert 1 m >>= continue
     EvKey KUp    [] -> inputCurVert (-1) m >>= continue
-    EvKey KRight [] -> inputCurHori ( 1) m >>= continue
+    EvKey KRight [] -> inputCurHori 1 m >>= continue
     EvKey KEsc [] -> continue (enterNormalMode m)
     _ -> continue m
 
@@ -362,28 +359,28 @@ update m e = case e of
 
 -- character length of hex representation of number
 hexLength :: Int -> Int
-hexLength = ceiling . (logBase 16) . (fromIntegral :: Int -> Double)
+hexLength = ceiling . logBase 16 . (fromIntegral :: Int -> Double)
 
 hexChars :: String
 hexChars = "0123456789abcdef"
 
 fromHex :: String -> Maybe Int
 fromHex [] = Just 0
-fromHex (h:ex) = ((*) size <$> digit) >+< (fromHex ex)
+fromHex (h:ex) = ((*) size <$> digit) >+< fromHex ex
     where (>+<) = liftM2 (+)
           digit = elemIndex (toLower h) hexChars
-          size = foldl (*) 1 $ replicate (length ex) 16
+          size = product $ replicate (length ex) 16
 
 toHex :: Int -> Int -> String
 toHex 0 _ = ""
 toHex n d = hexChars !! shifted : toHex (n-1) masked
     where s = 4*(n-1)
-          shifted = (shiftR d s) .&. 0xf
-          masked = d .&. ((shiftL 1 s)-1)
+          shifted = shiftR d s .&. 0xf
+          masked = d .&. (shiftL 1 s-1)
 
 -- round down to closest multiple of n
 floorN :: Int -> Int -> Int
-floorN n x = x - (mod x n)
+floorN n x = x - mod x n
 
 -- round up to closest multiple of n
 ceilN :: Int -> Int -> Int
@@ -413,8 +410,7 @@ viewOffset start step selected maxAddr rowCount = vBox rows where
                         then toHex (hexLength maxAddr) offset
                         else "~"
     rows = ( zipWith withAttr (fmap styleRow [0..rowCount-1])
-           . fmap str
-           . fmap display
+           . fmap (str . display)
            ) [start, start+step..]
 
 viewBytes :: [Word8] -> Int
@@ -439,13 +435,14 @@ viewBytes bytes perRow
     emptyByte = str $ replicate (displayWidth bv) ' '
     space     = str $ replicate (spaceWidth bv) ' '
     rows = ( zipWith styleRow [0..]
-           . fmap hBox
-           . fmap ((str "  ") :)
-           . fmap (intersperse space)
-           . fmap (padOut perRow emptyByte)
+           . fmap ( hBox 
+                  . (:) (str "  ")
+                  . intersperse space
+                  . padOut perRow emptyByte
+                  )
            . groupsOf perRow
            . zipWith styleCol [ (div i perRow, mod i perRow) | i <- [0..] ]
-           . fmap (str . (fromWord bv))
+           . fmap (str . fromWord bv)
            ) bytes
 
 viewEditor :: Model e -> Widget ResourceName
@@ -456,13 +453,13 @@ viewEditor m = Widget Greedy Greedy $ do
     let bytes = let byteCount = fromIntegral $ rowCount*perRow
                     start = fromIntegral $ scrollPos m
                     visibleBytes = Buf.slice start byteCount (buffer m)
-                in BL.unpack $ visibleBytes
-    let selectedRow = div ((cursorPos m) - (scrollPos m)) perRow
+                in BL.unpack visibleBytes
+    let selectedRow = div (cursorPos m - scrollPos m) perRow
     let selectedCol = mod (cursorPos m) perRow
     let offset = withAttr attrOffset
                $ viewOffset (scrollPos m) perRow selectedRow
                             (bufferLength m - 1) rowCount
-    let focused = map (\i -> i == (cursorFocus m)) [0..] :: [Bool]
+    let focused = map (\i -> i == cursorFocus m) [0..] :: [Bool]
     let views = map (viewBytes bytes perRow
                                (selectedRow, selectedCol) (inputCursor m))
                     (zip focused layout)
@@ -502,8 +499,8 @@ app = App { appDraw = view
 vhex :: IO ()
 vhex = do
     args <- getArgs
-    initial <- if length args > 0
-                then openFile (args !! 0) initialModel
+    initial <- if not (null args)
+                then openFile (head args) initialModel
                 else return initialModel
     _ <- defaultMain app initial
     return ()

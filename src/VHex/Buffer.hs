@@ -50,7 +50,7 @@ selectedIndex buf = case selected buf of
 
 index :: Buffer -> Int -> Word8
 index buf pos =
-    case (selected buf) of
+    case selected buf of
         Nothing -> error "empty buffer"
         Just sel -> index' sel
     where
@@ -105,7 +105,7 @@ insert :: Word8 -> Buffer -> Buffer
 insert w buf
     | null buf = singleton w
     | otherwise = buf { selected = Just (w, i)
-                      , length = (length buf) + 1
+                      , length = length buf + 1
                       , next = B.cons v (next buf)
                       }
     where Just (v, i) = selected buf
@@ -119,12 +119,12 @@ replace w buf
 remove :: Buffer -> Buffer
 remove buf
     | not $ B.null (next buf) = buf { selected = Just (B.head (next buf), i)
-                                    , length = (length buf) - 1
+                                    , length = length buf - 1
                                     , next = B.tail (next buf)
                                     }
     | not $ B.null (prev buf) = buf { prev = B.tail (prev buf)
                                     , selected = Just (B.head (prev buf), i-1)
-                                    , length = (length buf) - 1
+                                    , length = length buf - 1
                                     }
     | not $ null buf = empty
     | otherwise = error "empty buffer"
