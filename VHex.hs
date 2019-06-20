@@ -37,7 +37,7 @@ data ResourceName = EditorViewPort
 
 data Mode = NormalMode
           | ReplaceMode
---        | InsertMode
+          | InsertMode
 
 data CmdLineMode = CmdNone
                  | CmdEx
@@ -269,32 +269,49 @@ normalMode m vtye = case vtye of
     EvKey (KChar 'G') []      -> scrollBottom m >>= continue
     EvKey (KChar 'q') []      -> halt m
     EvKey (KChar 'r') []      -> continue (enterReplaceMode m)
---  EvKey (KChar 'i') []      -> continue m { mode = InsertMode }
+    EvKey (KChar 'i') []      -> continue (enterInsertMode m)
     EvKey (KChar ':') []      -> continue m { cmdMode = CmdEx}
     _ -> continue m
 
 enterNormalMode :: Model e -> Model e
-enterNormalMode m = m { mode = NormalMode }
+enterNormalMode m = m { mode = NormalMode
+                      , inputCursor = Nothing
+                      }
 
 enterReplaceMode :: Model e -> Model e
 enterReplaceMode m =
     case Buf.selectedValue (buffer m) of
         Nothing -> m
-        Just _ -> m { mode = ReplaceMode
-                    , inputCursor = Just 0
-                    }
+        Just _ -> m { mode = ReplaceMode, inputCursor = Just 0 }
 
-inputChar :: Char -> Model e -> EventM ResourceName (Model e)
-inputChar c m =
-    case inputCursor m >>= (fmap writeInput . writeToInput) of
+enterInsertMode :: Model e -> Model e
+enterInsertMode m = m { mode = InsertMode, inputCursor = Just 0 }
+
+setSelection :: Model e -> Word8 -> Model e
+setSelection m w = m { buffer = Buf.replace w (buffer m) }
+
+setChar :: ByteView -> Word8 -> Char -> Int -> Maybe Word8
+setChar bv w c i = (toWord bv) modified
+    where current = (fromWord bv) w
+          modified = current & (ix i) .~ c
+
+replaceChar :: Char -> Model e -> EventM ResourceName (Model e)
+replaceChar c m =
+    case inputCursor m >>= (fmap (setSelection m) . (setChar bv (cursorVal m) c)) of
         Nothing -> return m
         Just w -> inputCurHori 1 w
-    where
-        bv = bvFocused m
-        writeToInput :: Int -> Maybe Word8
-        writeToInput i = (toWord bv)
-                         $ ((fromWord bv) (cursorVal m)) & (ix i) .~ c
-        writeInput input = m { buffer = Buf.replace input (buffer m) }
+    where bv = bvFocused m
+
+insertChar :: Char -> Model e -> EventM ResourceName (Model e)
+insertChar c m =
+    case inputCursor m of
+        Just 0 -> case setChar (bvFocused m) (cursorVal m) c 0 of
+            Nothing -> return m
+            Just newWord -> return $
+                setSelection m { buffer = Buf.insert 0 (buffer m)
+                               , inputCursor = Just 1
+                               } newWord
+        _ -> replaceChar c m
 
 inputCurHori :: Int -> Model e -> EventM ResourceName (Model e)
 inputCurHori d m = case inputCursor m of
@@ -310,7 +327,7 @@ inputCurVert = curVert
 replaceMode :: Model e -> Event
             -> EventM ResourceName (Next (Model e))
 replaceMode m vtye = case vtye of
-    EvKey (KChar c) [] -> inputChar c m    >>= continue
+    EvKey (KChar c) [] -> replaceChar c m  >>= continue
     EvKey KLeft  [] -> inputCurHori (-1) m >>= continue
     EvKey KDown  [] -> inputCurVert ( 1) m >>= continue
     EvKey KUp    [] -> inputCurVert (-1) m >>= continue
@@ -318,13 +335,16 @@ replaceMode m vtye = case vtye of
     EvKey KEsc [] -> continue (enterNormalMode m)
     _ -> continue m
 
-{-
-insertMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
-insertMode m vtye =
-    case vtye of
-        EvKey KEsc [] -> continue m { mode = NormalMode }
-        _ -> continue m
--}
+insertMode :: Model e -> Event
+            -> EventM ResourceName (Next (Model e))
+insertMode m vtye = case vtye of
+    EvKey (KChar c) [] -> insertChar c m   >>= continue
+    EvKey KLeft  [] -> inputCurHori (-1) m >>= continue
+    EvKey KDown  [] -> inputCurVert ( 1) m >>= continue
+    EvKey KUp    [] -> inputCurVert (-1) m >>= continue
+    EvKey KRight [] -> inputCurHori ( 1) m >>= continue
+    EvKey KEsc [] -> continue (enterNormalMode m)
+    _ -> continue m
 
 update :: Model e -> BrickEvent ResourceName e
        -> EventM ResourceName (Next (Model e))
@@ -334,7 +354,7 @@ update m e = case e of
             CmdEx -> updateExCmd m vtye
             CmdNone -> normalMode m vtye
         ReplaceMode -> replaceMode m vtye
---      InsertMode -> insertmode m vtye
+        InsertMode -> insertMode m vtye
     _ -> continue m
 
 -- character length of hex representation of number
@@ -461,7 +481,7 @@ viewCmdLine m =
             case mode m of
                 NormalMode -> " "
                 ReplaceMode -> "-- REPLACE --"
---              InsertMode -> "-- INSERT --"
+                InsertMode -> "-- INSERT --"
         CmdEx -> renderForm $ cmdForm m
 --      CmdSearch -> str " "
 
