@@ -11,6 +11,8 @@ import Data.List (elemIndex, intersperse)
 import Data.Maybe (fromMaybe)
 
 import Control.Monad (liftM2)
+import Control.Monad.IO.Class (liftIO)
+import Control.Exception --(try, IOException(..))
 
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BL
@@ -40,7 +42,7 @@ data Mode = NormalMode
           | ReplaceMode
           | InsertMode
 
-data CmdLineMode = CmdNone (Maybe String)
+data CmdLineMode = CmdNone (Maybe (Either String String))
                  | CmdEx (Editor String ResourceName)
 --               | CmdSearch
                  deriving (Show)
@@ -172,6 +174,17 @@ openFile path m = do
              , buffer = Buf.buffer contents
              }
 
+saveFile:: Model -> IO Model
+saveFile m = do
+    let contents = Buf.contents (buffer m)
+    let path = filePath m
+    res <- try $ BL.writeFile path contents :: IO (Either IOException ())
+    case res of
+        Left err -> return
+            m { cmdMode = CmdNone $ Just $ Left (show err) }
+        Right _ -> return
+            m { cmdMode = CmdNone $ Just $ Right $ show path ++ " written" }
+
 viewportSize :: EventM ResourceName (Int, Int)
 viewportSize = do
     extent <- lookupExtent EditorViewPort
@@ -239,7 +252,11 @@ executeCmd :: Model -> Editor String ResourceName
            -> EventM ResourceName (Next Model)
 executeCmd m cmdLine = case head $ getEditContents cmdLine of
     "q" -> halt m
-    cmd -> continue m { cmdMode = CmdNone $ Just ("Invalid command: " ++ cmd) }
+    "w" -> liftIO (saveFile m') >>= continue
+    cmd -> continue
+        m { cmdMode = CmdNone $ Just $ Left ("Invalid command: " ++ cmd) }
+    where
+        m' = m { cmdMode = CmdNone Nothing }
 
 updateExCmd :: Model -> Event -> Editor String ResourceName
             -> EventM ResourceName (Next Model)
@@ -323,13 +340,9 @@ insertChar c m =
 inputCurHori :: Int -> Model -> EventM ResourceName Model
 inputCurHori d m = case inputCursor m of
         Nothing -> return m
-        Just i ->
-            if i+d < 0 then
-                curHori d m { inputCursor = Just (dw-1) }
-            else if i+d >= dw then
-                curHori d m { inputCursor = Just 0 }
-            else
-                return m { inputCursor = Just (i+d) }
+        Just i | i+d < 0   -> curHori d m { inputCursor = Just (dw-1) }
+               | i+d >= dw -> curHori d m { inputCursor = Just 0 }
+               | otherwise -> return m { inputCursor = Just (i+d) }
         where dw = displayWidth (bvFocused m)
 
 inputCurVert :: Int -> Model -> EventM ResourceName Model
@@ -431,18 +444,17 @@ viewBytes :: [Word8] -> Int
 viewBytes bytes perRow
           (selectedRow, selectedCol) ic
           (focused, bv) = vBox rows where
-    styleCol (r, c) col =
-        if c == selectedCol && r == selectedRow
-            then if focused
-                then case ic of
-                    Nothing -> withAttr attrSelectedFocused col
-                    Just i -> showCursor Cursor (Location (i, 0)) col
-                else withAttr attrSelected col
-            else col
-    styleRow r row = let attr = if enableCursorLine && r == selectedRow
-                                    then attrCursorLine
-                                    else attrDef
-                     in withAttr attr row
+    styleCol (r, c) col
+        | c /= selectedCol || r /= selectedRow = col
+        | not focused = withAttr attrSelected col
+        | otherwise = case ic of
+            Nothing -> withAttr attrSelectedFocused col
+            Just i -> showCursor Cursor (Location (i, 0)) col
+    styleRow r row =
+        let attr = if enableCursorLine && r == selectedRow
+                    then attrCursorLine
+                    else attrDef
+        in withAttr attr row
     emptyByte = str $ replicate (displayWidth bv) ' '
     space     = str $ replicate (spaceWidth bv) ' '
     rows = ( zipWith styleRow [0..]
@@ -495,8 +507,10 @@ viewCmdLine m =
             case mode m of
                 NormalMode  -> case errorMsg of
                     Nothing -> str " "
-                    Just msg -> withAttr attrError (str msg)
-                            <+> withAttr attrDef (str " ")
+                    Just msg -> case msg of
+                        Left err -> withAttr attrError (str err)
+                                    <+> withAttr attrDef (str " ")
+                        Right info -> withAttr attrDef (str info)
                 ReplaceMode -> withAttr attrMode  $ str "-- REPLACE --"
                 InsertMode  -> withAttr attrMode  $ str "-- INSERT --"
         CmdEx cmdLine -> str ":" <+> renderEditor (str . head) True cmdLine
