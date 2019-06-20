@@ -1,6 +1,6 @@
 import System.IO (FilePath)
 import System.Environment (getArgs)
-import System.Posix (getFileStatus, fileSize)
+--import System.Posix (getFileStatus, fileSize)
 
 import qualified Data.Text as T
 
@@ -24,14 +24,19 @@ import qualified Brick.Util as BU
 import Brick.Forms
 import Brick.Widgets.Core
 
+import Data.Buffer (Buffer)
+import qualified Data.Buffer as Buf
+
 data ResourceName = EditorViewPort
                   | CmdExLine
                   | EditorBuffer
-                  | HexCursor
+                  | Cursor
                   deriving (Show, Eq, Ord)
 
+type WordInput = (String, Int)
+
 data Mode = NormalMode
-          | ReplaceMode
+          | ReplaceMode WordInput
 --        | InsertMode
 
 data CmdLineMode = CmdNone
@@ -42,15 +47,26 @@ data CmdLineMode = CmdNone
 data Model e = Model
     { filePath :: FilePath
     , fileContents :: ByteString
-    , bufferContents :: ByteString
-    , bufferLength :: Int
-    , cursorPos :: Int              -- offset to selected byte
+    , buffer :: Buffer
     , cursorFocus :: Int            -- focused view by index
     , scrollPos :: Int              -- offset to visible top left byte
     , mode :: Mode
     , cmdMode :: CmdLineMode
     , cmdForm :: Form T.Text e ResourceName
     }
+
+bufferLength :: Model e -> Int
+bufferLength = Buf.length . buffer
+
+cursorPos :: Model e -> Int
+cursorPos m = case Buf.selectedIndex (buffer m) of
+    Nothing -> 0
+    Just index -> index
+
+cursorVal :: Model e -> Word8
+cursorVal m = case Buf.selectedValue (buffer m) of
+    Nothing -> 0
+    Just value -> value
 
 bytesPerRowMultiple :: Int
 bytesPerRowMultiple = 4
@@ -125,9 +141,7 @@ initialModel :: Model e
 initialModel = Model
     { filePath = ""
     , fileContents = BL.empty
-    , bufferContents = BL.empty
-    , bufferLength = 0
-    , cursorPos = 0
+    , buffer = Buf.empty
     , cursorFocus = 0
     , scrollPos = 0
     , mode = NormalMode
@@ -147,11 +161,10 @@ bytesPerRow w byteCount = max 1 $ floorN bytesPerRowMultiple maxBytes where
 openFile :: FilePath -> Model e -> IO (Model e)
 openFile path m = do
     contents <- BL.readFile path
-    len <- fmap (fromIntegral . fileSize) (getFileStatus path)
+    --len <- fmap (fromIntegral . fileSize) (getFileStatus path)
     return m { filePath = path
              , fileContents = contents
-             , bufferContents = contents
-             , bufferLength = len
+             , buffer = Buf.buffer contents
              }
 
 viewportSize :: EventM ResourceName (Int, Int)
@@ -180,31 +193,34 @@ scrollTop :: Model e -> EventM ResourceName (Model e)
 scrollTop m = return m { scrollPos = 0 }
 
 curHori :: Int -> Model e -> EventM ResourceName (Model e)
-curHori n m = return
-    m { cursorPos = BU.clamp 0 (bufferLength m -1) ((cursorPos m) + n) }
+curHori n m = return m { buffer = Buf.moveTo newPos (buffer m) }
+    where newPos = BU.clamp 0 (bufferLength m -1) ((cursorPos m) + n)
 
 curVert :: Int -> Model e -> EventM ResourceName (Model e)
 curVert n m = viewportSize >>= curVert' where
     curVert' (w, _) = let step = bytesPerRow w (bufferLength m)
                           newPos = min (bufferLength m - 1)
                                        ((cursorPos m) + n*step)
+                          finalPos = if 0 <= newPos
+                                        then newPos
+                                        else cursorPos m
                       in return
-                        m { cursorPos = if 0 <= newPos
-                                            then newPos
-                                            else cursorPos m }
+                        m { buffer = Buf.moveTo finalPos (buffer m) }
 
 curBeginning :: Model e -> EventM ResourceName (Model e)
 curBeginning m = viewportSize >>= curBeginning' where
     curBeginning' (w, _) = let perRow = bytesPerRow w (bufferLength m)
+                               newPos = floorN perRow (cursorPos m)
                            in return
-                            m { cursorPos = floorN perRow (cursorPos m) }
+                            m { buffer = Buf.moveTo newPos (buffer m) }
 
 curEnd :: Model e -> EventM ResourceName (Model e)
 curEnd m = viewportSize >>= curEnd' where
     curEnd' (w, _) = let perRow = bytesPerRow w (bufferLength m)
                          lineEnd = floorN perRow (cursorPos m) + perRow - 1
+                         newPos = min lineEnd (bufferLength m - 1)
                      in return
-                        m { cursorPos = min lineEnd (bufferLength m - 1) }
+                        m { buffer = Buf.moveTo newPos (buffer m) }
 
 focusNext :: Model e -> EventM ResourceName (Model e)
 focusNext m = return
@@ -245,15 +261,36 @@ normalMode m vtye = case vtye of
     EvKey (KChar 'g') []      -> scrollTop m    >>= continue
     EvKey (KChar 'G') []      -> scrollBottom m >>= continue
     EvKey (KChar 'q') []      -> halt m
-    EvKey (KChar 'r') []      -> continue m { mode = ReplaceMode }
+    EvKey (KChar 'r') []      -> continue (enterReplaceMode m)
 --  EvKey (KChar 'i') []      -> continue m { mode = InsertMode }
     EvKey (KChar ':') []      -> continue m { cmdMode = CmdEx}
     _ -> continue m
 
-replaceMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
-replaceMode m vtye = case vtye of
-    EvKey KRight [] -> continue m { mode = NormalMode }
-    EvKey KLeft [] -> continue m { mode = NormalMode }
+enterReplaceMode :: Model e -> Model e
+enterReplaceMode m = case Buf.selectedValue (buffer m) of
+    Nothing -> m { buffer = Buf.singleton 0
+                 , mode = ReplaceMode (toString 0, 0) }
+    Just w -> m { mode = ReplaceMode (toString w, 0) }
+    where toString = fromWord (layout !! (cursorFocus m))
+
+inputCurHori :: Int -> Model e -> WordInput -> EventM ResourceName (Model e)
+inputCurHori d m (input, i) = do
+    let nextPos = i + d
+    if 0 < nextPos && nextPos < length input
+        then return m { mode = ReplaceMode (input, nextPos) }
+        else do
+            moved <- curHori d m
+            let nextByte = cursorVal moved
+            let nextInput = fromWord (layout !! (cursorFocus m)) nextByte
+            return moved { mode = ReplaceMode (nextInput, 0) }
+
+replaceMode :: Model e -> WordInput -> Event
+            -> EventM ResourceName (Next (Model e))
+replaceMode m wi vtye = case vtye of
+    EvKey KLeft  [] -> inputCurHori (-1) m wi >>= continue
+    EvKey KDown  [] -> curVert ( 1) m         >>= continue
+    EvKey KUp    [] -> curVert (-1) m         >>= continue
+    EvKey KRight [] -> inputCurHori ( 1) m wi >>= continue
     EvKey KEsc [] -> continue m { mode = NormalMode }
     _ -> continue m
 
@@ -272,7 +309,7 @@ update m e = case e of
         NormalMode -> case cmdMode m of
             CmdEx -> updateExCmd m vtye
             CmdNone -> normalMode m vtye
-        ReplaceMode -> replaceMode m vtye
+        ReplaceMode wi -> replaceMode m wi vtye
 --      InsertMode -> insertmode m vtye
     _ -> continue m
 
@@ -325,17 +362,20 @@ viewOffset start step selected maxAddr rowCount = vBox rows where
            ) [start, start+step..]
 
 viewBytes :: [Word8] -> Int
-          -> (Int, Int)
+          -> (Int, Int) -> Maybe Int
           -> (Bool, ByteView)
           -> Widget ResourceName
 viewBytes bytes perRow
-          (selectedRow, selectedCol)
+          (selectedRow, selectedCol) cursorIndex
           (focused, bv) = vBox rows where
-    styleCol (r, c) col = if c == selectedCol && r == selectedRow
-                            then if focused
-                                    then withAttr attrSelectedFocused col
-                                    else withAttr attrSelected col
-                            else col
+    styleCol (r, c) col =
+        if c == selectedCol && r == selectedRow
+            then if focused
+                then case cursorIndex of
+                    Nothing -> withAttr attrSelectedFocused col
+                    Just i -> showCursor Cursor (Location (i, 0)) col
+                else withAttr attrSelected col
+            else col
     styleRow r row = let attr = if enableCursorLine && r == selectedRow
                                     then attrCursorLine
                                     else attrDef
@@ -359,8 +399,7 @@ viewEditor m = Widget Greedy Greedy $ do
     let rowCount = ctx^.availHeightL
     let bytes = let byteCount = fromIntegral $ rowCount*perRow
                     start = fromIntegral $ scrollPos m
-                    allBytes = bufferContents m
-                    visibleBytes = BL.take byteCount (BL.drop start allBytes)
+                    visibleBytes = Buf.slice start byteCount (buffer m)
                 in BL.unpack $ visibleBytes
     let selectedRow = div ((cursorPos m) - (scrollPos m)) perRow
     let selectedCol = mod (cursorPos m) perRow
@@ -368,7 +407,11 @@ viewEditor m = Widget Greedy Greedy $ do
                $ viewOffset (scrollPos m) perRow selectedRow
                             (bufferLength m - 1) rowCount
     let focused = map (\i -> i == (cursorFocus m)) [0..] :: [Bool]
-    let views = map (viewBytes bytes perRow (selectedRow, selectedCol))
+    let cursorIndex = case mode m of
+                        NormalMode -> Nothing
+                        ReplaceMode (_, i) -> Just i
+    let views = map (viewBytes bytes perRow
+                               (selectedRow, selectedCol) cursorIndex)
                     (zip focused layout)
     render
         $ reportExtent EditorViewPort
@@ -387,7 +430,7 @@ viewCmdLine m =
         CmdNone -> withAttr attrMode $ str $
             case mode m of
                 NormalMode -> " "
-                ReplaceMode -> "-- REPLACE --"
+                ReplaceMode _ -> "-- REPLACE --"
 --              InsertMode -> "-- INSERT --"
         CmdEx -> renderForm $ cmdForm m
 --      CmdSearch -> str " "
