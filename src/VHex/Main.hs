@@ -4,8 +4,6 @@ import System.IO (FilePath)
 import System.Environment (getArgs)
 --import System.Posix (getFileStatus, fileSize)
 
-import qualified Data.Text as T
-
 import Data.Bits ((.&.), shiftR, shiftL)
 import Data.Word (Word8)
 import Data.Char (chr, ord, toLower)
@@ -26,14 +24,14 @@ import Brick.Main
 import Brick.AttrMap (AttrMap, attrMap, AttrName, attrName)
 import Brick.Types
 import qualified Brick.Util as BU
-import Brick.Forms
 import Brick.Widgets.Core
+import Brick.Widgets.Edit
 
 import VHex.Buffer (Buffer)
 import qualified VHex.Buffer as Buf
 
 data ResourceName = EditorViewPort
-                  | CmdExLine
+                  | CmdLine
                   | EditorBuffer
                   | Cursor
                   deriving (Show, Eq, Ord)
@@ -42,12 +40,12 @@ data Mode = NormalMode
           | ReplaceMode
           | InsertMode
 
-data CmdLineMode = CmdNone
-                 | CmdEx
+data CmdLineMode = CmdNone (Maybe String)
+                 | CmdEx (Editor String ResourceName)
 --               | CmdSearch
                  deriving (Show)
 
-data Model e = Model
+data Model = Model
     { filePath :: FilePath
     , fileContents :: ByteString
     , buffer :: Buffer
@@ -56,19 +54,18 @@ data Model e = Model
     , inputCursor :: Maybe Int
     , mode :: Mode
     , cmdMode :: CmdLineMode
-    , cmdForm :: Form T.Text e ResourceName
     }
 
-bufferLength :: Model e -> Int
+bufferLength :: Model -> Int
 bufferLength = Buf.length . buffer
 
-cursorPos :: Model e -> Int
+cursorPos :: Model -> Int
 cursorPos m = fromMaybe 0 $ Buf.selectedIndex (buffer m)
 
-cursorVal :: Model e -> Word8
+cursorVal :: Model -> Word8
 cursorVal m = fromMaybe 0 $ Buf.selectedValue (buffer m)
 
-bvFocused :: Model e -> ByteView
+bvFocused :: Model -> ByteView
 bvFocused m = layout !! cursorFocus m
 
 bytesPerRowMultiple :: Int
@@ -87,6 +84,7 @@ attrSelected :: AttrName
 attrSelectedFocused :: AttrName
 attrOffset :: AttrName
 attrOffsetCursorLine :: AttrName
+attrError :: AttrName
 attrStatusBar :: AttrName
 attrMode :: AttrName
 attrDef = attrName "def"
@@ -97,6 +95,7 @@ attrOffset = attrName "offset"
 attrOffsetCursorLine = attrName "offsetCursorLine"
 attrStatusBar = attrName "statusbar"
 attrMode = attrName "mode"
+attrError = attrName "error"
 
 attributes :: AttrMap
 attributes = attrMap mempty
@@ -108,10 +107,13 @@ attributes = attrMap mempty
     , (attrOffsetCursorLine, yellow `BU.on` grey23)
     , (attrStatusBar, BU.bg grey30)
     , (attrMode, BU.fg yellow `VTY.withStyle` VTY.bold)
+    , (attrError, grey15 `BU.on` red `VTY.withStyle` VTY.bold)
     ] where fg = VTY.brightWhite
             bg = VTY.black
+            red = VTY.brightRed
             grey = VTY.brightBlack
             yellow = VTY.brightYellow
+            grey15 = VTY.rgbColor (38::Int) (38::Int) (38::Int)
             grey23 = VTY.rgbColor (58::Int) (58::Int) (58::Int)
             grey30 = VTY.rgbColor (78::Int) (78::Int) (78::Int)
 
@@ -142,7 +144,7 @@ ascii1 = ByteView
     , spaceWidth = 0
     }
 
-initialModel :: Model e
+initialModel :: Model
 initialModel = Model
     { filePath = ""
     , fileContents = BL.empty
@@ -151,10 +153,7 @@ initialModel = Model
     , scrollPos = 0
     , inputCursor = Nothing
     , mode = NormalMode
-    , cmdMode = CmdNone
-    , cmdForm = newForm
-        [(str ":" <+>) @@= editTextField id CmdExLine (Just 1)]
-        T.empty
+    , cmdMode = CmdNone Nothing
     }
 
 bytesPerRow :: Int -> Int -> Int
@@ -164,7 +163,7 @@ bytesPerRow w byteCount = max 1 $ floorN bytesPerRowMultiple maxBytes where
     padding = length layout - 1
     maxBytes = div (w - offsetWidth - padding) linWidth
 
-openFile :: FilePath -> Model e -> IO (Model e)
+openFile :: FilePath -> Model -> IO Model
 openFile path m = do
     contents <- BL.readFile path
     --len <- fmap (fromIntegral . fileSize) (getFileStatus path)
@@ -180,7 +179,7 @@ viewportSize = do
         Nothing -> return (0, 0)
         Just (Extent _ _ dims _) -> return dims
 
-scroll :: Int -> Model e -> EventM ResourceName (Model e)
+scroll :: Int -> Model -> EventM ResourceName Model
 scroll n m = viewportSize >>= scroll' where
     scroll' (w, _) = return
         m { scrollPos = let perRow = bytesPerRow w (bufferLength m)
@@ -188,21 +187,21 @@ scroll n m = viewportSize >>= scroll' where
                             maxPos = floorN perRow (bufferLength m - 1)
                         in BU.clamp 0 maxPos (prev + n*perRow) }
 
-scrollBottom :: Model e -> EventM ResourceName (Model e)
+scrollBottom :: Model -> EventM ResourceName Model
 scrollBottom m = viewportSize >>= scrollBottom' where
     scrollBottom' (w, h) = return $
         let perRow = bytesPerRow w (bufferLength m)
             maxPos = bufferLength m - 1
         in m { scrollPos = max 0 $ ceilN perRow (maxPos - perRow*h) }
 
-scrollTop :: Model e -> EventM ResourceName (Model e)
+scrollTop :: Model -> EventM ResourceName Model
 scrollTop m = return m { scrollPos = 0 }
 
-curHori :: Int -> Model e -> EventM ResourceName (Model e)
+curHori :: Int -> Model -> EventM ResourceName Model
 curHori n m = return m { buffer = Buf.moveTo newPos (buffer m) }
     where newPos = BU.clamp 0 (bufferLength m - 1) (cursorPos m + n)
 
-curVert :: Int -> Model e -> EventM ResourceName (Model e)
+curVert :: Int -> Model -> EventM ResourceName Model
 curVert n m = viewportSize >>= curVert' where
     curVert' (w, _) = let step = bytesPerRow w (bufferLength m)
                           newPos = min (bufferLength m - 1)
@@ -213,14 +212,14 @@ curVert n m = viewportSize >>= curVert' where
                       in return
                         m { buffer = Buf.moveTo finalPos (buffer m) }
 
-curBeginning :: Model e -> EventM ResourceName (Model e)
+curBeginning :: Model -> EventM ResourceName Model
 curBeginning m = viewportSize >>= curBeginning' where
     curBeginning' (w, _) = let perRow = bytesPerRow w (bufferLength m)
                                newPos = floorN perRow (cursorPos m)
                            in return
                             m { buffer = Buf.moveTo newPos (buffer m) }
 
-curEnd :: Model e -> EventM ResourceName (Model e)
+curEnd :: Model -> EventM ResourceName Model
 curEnd m = viewportSize >>= curEnd' where
     curEnd' (w, _) = let perRow = bytesPerRow w (bufferLength m)
                          lineEnd = floorN perRow (cursorPos m) + perRow - 1
@@ -228,24 +227,31 @@ curEnd m = viewportSize >>= curEnd' where
                      in return
                         m { buffer = Buf.moveTo newPos (buffer m) }
 
-focusNext :: Model e -> EventM ResourceName (Model e)
+focusNext :: Model -> EventM ResourceName Model
 focusNext m = return
     m { cursorFocus = mod (cursorFocus m + 1) (length layout) }
 
-focusPrev :: Model e -> EventM ResourceName (Model e)
+focusPrev :: Model -> EventM ResourceName Model
 focusPrev m = return
     m { cursorFocus = mod (cursorFocus m - 1) (length layout) }
 
-updateExCmd :: Model e -> Event -> EventM ResourceName (Next (Model e))
-updateExCmd m vtye =
-    case vtye of
-        EvKey KEsc   [] -> continue $ m { cmdMode = CmdNone }
-        EvKey KEnter [] -> continue $ m { cmdMode = CmdNone } -- TODO execute
-        _ -> do
-            cmdForm' <- handleFormEvent (VtyEvent vtye) (cmdForm m)
-            continue m { cmdForm = cmdForm' }
+executeCmd :: Model -> Editor String ResourceName
+           -> EventM ResourceName (Next Model)
+executeCmd m cmdLine = case head $ getEditContents cmdLine of
+    "q" -> halt m
+    cmd -> continue m { cmdMode = CmdNone $ Just ("Invalid command: " ++ cmd) }
 
-normalMode :: Model e -> Event -> EventM ResourceName (Next (Model e))
+updateExCmd :: Model -> Event -> Editor String ResourceName
+            -> EventM ResourceName (Next Model)
+updateExCmd m vtye cmdLine =
+    case vtye of
+        EvKey KEsc   [] -> continue $ m { cmdMode = CmdNone Nothing }
+        EvKey KEnter [] -> executeCmd m cmdLine
+        _ -> do
+            cmdLine' <- handleEditorEvent vtye cmdLine
+            continue m { cmdMode = CmdEx cmdLine' }
+
+normalMode :: Model -> Event -> EventM ResourceName (Next Model)
 normalMode m vtye = case vtye of
     EvKey (KChar 'h')  []      -> curHori (-1) m >>= continue
     EvKey KLeft        []      -> curHori (-1) m >>= continue
@@ -266,30 +272,30 @@ normalMode m vtye = case vtye of
     EvKey (KChar 'd')  [MCtrl] -> scroll   15  m >>= continue
     EvKey (KChar 'g')  []      -> scrollTop    m >>= continue
     EvKey (KChar 'G')  []      -> scrollBottom m >>= continue
-    EvKey (KChar 'q')  []      -> halt m
     EvKey (KChar 'r')  []      -> continue (enterReplaceMode m)
     EvKey (KChar 'i')  []      -> continue (enterInsertMode m)
-    EvKey (KChar ':')  []      -> continue m { cmdMode = CmdEx}
+    EvKey (KChar ':')  []      -> continue
+        m { cmdMode = CmdEx (editor CmdLine (Just 1) "") }
     _ -> continue m
 
-enterNormalMode :: Model e -> Model e
+enterNormalMode :: Model -> Model
 enterNormalMode m = m { mode = NormalMode
                       , inputCursor = Nothing
+                      , cmdMode = CmdNone Nothing
                       }
 
-enterReplaceMode :: Model e -> Model e
-enterReplaceMode m =
-    case Buf.selectedValue (buffer m) of
-        Nothing -> m
-        Just _ -> m { mode = ReplaceMode, inputCursor = Just 0 }
+enterReplaceMode :: Model -> Model
+enterReplaceMode m
+    | Buf.null (buffer m) = m
+    | otherwise = m { mode = ReplaceMode, inputCursor = Just 0 }
 
-enterInsertMode :: Model e -> Model e
+enterInsertMode :: Model -> Model
 enterInsertMode m = m { mode = InsertMode, inputCursor = Just 0 }
 
-setSelection :: Model e -> Word8 -> Model e
+setSelection :: Model -> Word8 -> Model
 setSelection m w = m { buffer = Buf.replace w (buffer m) }
 
-insertSelection :: Model e -> Word8 -> Model e
+insertSelection :: Model -> Word8 -> Model
 insertSelection m w = m { buffer = Buf.insert w (buffer m) }
 
 setChar :: ByteView -> Word8 -> Char -> Int -> Maybe Word8
@@ -297,7 +303,7 @@ setChar bv w c i = toWord bv modified
     where current = fromWord bv w
           modified = current & ix i .~ c
 
-replaceChar :: Char -> Model e -> EventM ResourceName (Model e)
+replaceChar :: Char -> Model -> EventM ResourceName Model
 replaceChar c m =
     case inputCursor m >>= replaceChar' of
         Nothing -> return m
@@ -305,7 +311,7 @@ replaceChar c m =
     where bv = bvFocused m
           replaceChar' = fmap (setSelection m) . setChar bv (cursorVal m) c
 
-insertChar :: Char -> Model e -> EventM ResourceName (Model e)
+insertChar :: Char -> Model -> EventM ResourceName Model
 insertChar c m =
     case inputCursor m of
         Just 0 -> case setChar (bvFocused m) 0 c 0 of
@@ -314,7 +320,7 @@ insertChar c m =
         _ -> replaceChar c m
 
 -- XXX d must be (-1) or 1, maybe use custom data type?
-inputCurHori :: Int -> Model e -> EventM ResourceName (Model e)
+inputCurHori :: Int -> Model -> EventM ResourceName Model
 inputCurHori d m = case inputCursor m of
         Nothing -> return m
         Just i ->
@@ -326,11 +332,11 @@ inputCurHori d m = case inputCursor m of
                 return m { inputCursor = Just (i+d) }
         where dw = displayWidth (bvFocused m)
 
-inputCurVert :: Int -> Model e -> EventM ResourceName (Model e)
+inputCurVert :: Int -> Model -> EventM ResourceName Model
 inputCurVert = curVert
 
-replaceMode :: Model e -> Event
-            -> EventM ResourceName (Next (Model e))
+replaceMode :: Model -> Event
+            -> EventM ResourceName (Next Model)
 replaceMode m vtye = case vtye of
     EvKey (KChar c) [] -> replaceChar c m  >>= continue
     EvKey KLeft  [] -> inputCurHori (-1) m >>= continue
@@ -340,8 +346,8 @@ replaceMode m vtye = case vtye of
     EvKey KEsc [] -> continue (enterNormalMode m)
     _ -> continue m
 
-insertMode :: Model e -> Event
-            -> EventM ResourceName (Next (Model e))
+insertMode :: Model -> Event
+            -> EventM ResourceName (Next Model)
 insertMode m vtye = case vtye of
     EvKey (KChar c) [] -> insertChar c m      >>= continue
     EvKey KLeft     [] -> inputCurHori (-1) m >>= continue
@@ -351,13 +357,13 @@ insertMode m vtye = case vtye of
     EvKey KEsc      [] -> continue (enterNormalMode m)
     _ -> continue m
 
-update :: Model e -> BrickEvent ResourceName e
-       -> EventM ResourceName (Next (Model e))
+update :: Model -> BrickEvent ResourceName e
+       -> EventM ResourceName (Next Model)
 update m e = case e of
     VtyEvent vtye -> case mode m of
         NormalMode -> case cmdMode m of
-            CmdEx -> updateExCmd m vtye
-            CmdNone -> normalMode m vtye
+            CmdEx cmdLine -> updateExCmd m vtye cmdLine
+            CmdNone _ -> normalMode m vtye
         ReplaceMode -> replaceMode m vtye
         InsertMode -> insertMode m vtye
     _ -> continue m
@@ -381,7 +387,7 @@ toHex 0 _ = ""
 toHex n d = hexChars !! shifted : toHex (n-1) masked
     where s = 4*(n-1)
           shifted = shiftR d s .&. 0xf
-          masked = d .&. (shiftL 1 s-1)
+          masked = d .&. (shiftL 1 s - 1)
 
 -- round down to closest multiple of n
 floorN :: Int -> Int -> Int
@@ -423,12 +429,12 @@ viewBytes :: [Word8] -> Int
           -> (Bool, ByteView)
           -> Widget ResourceName
 viewBytes bytes perRow
-          (selectedRow, selectedCol) wi
+          (selectedRow, selectedCol) ic
           (focused, bv) = vBox rows where
     styleCol (r, c) col =
         if c == selectedCol && r == selectedRow
             then if focused
-                then case wi of
+                then case ic of
                     Nothing -> withAttr attrSelectedFocused col
                     Just i -> showCursor Cursor (Location (i, 0)) col
                 else withAttr attrSelected col
@@ -440,7 +446,7 @@ viewBytes bytes perRow
     emptyByte = str $ replicate (displayWidth bv) ' '
     space     = str $ replicate (spaceWidth bv) ' '
     rows = ( zipWith styleRow [0..]
-           . fmap ( hBox 
+           . fmap ( hBox
                   . (:) (str "  ")
                   . intersperse space
                   . padOut perRow emptyByte
@@ -450,7 +456,7 @@ viewBytes bytes perRow
            . fmap (str . fromWord bv)
            ) bytes
 
-viewEditor :: Model e -> Widget ResourceName
+viewEditor :: Model -> Widget ResourceName
 viewEditor m = Widget Greedy Greedy $ do
     ctx <- getContext
     let perRow = bytesPerRow (ctx^.availWidthL) (bufferLength m)
@@ -473,7 +479,7 @@ viewEditor m = Widget Greedy Greedy $ do
         $ hBox
         $ offset : views ++ [ withAttr attrDef $ fill ' ' ]
 
-viewStatusBar :: Model e -> Widget ResourceName
+viewStatusBar :: Model -> Widget ResourceName
 viewStatusBar m = withAttr attrStatusBar $ str $
     filePath m ++ ": "
     ++ show (cursorPos m) ++ ", "
@@ -482,21 +488,24 @@ viewStatusBar m = withAttr attrStatusBar $ str $
         Nothing -> ""
         Just i -> show i
 
-viewCmdLine :: Model e -> Widget ResourceName
+viewCmdLine :: Model -> Widget ResourceName
 viewCmdLine m =
     case cmdMode m of
-        CmdNone -> withAttr attrMode $ str $
+        CmdNone errorMsg ->
             case mode m of
-                NormalMode -> " "
-                ReplaceMode -> "-- REPLACE --"
-                InsertMode -> "-- INSERT --"
-        CmdEx -> renderForm $ cmdForm m
+                NormalMode  -> case errorMsg of
+                    Nothing -> str " "
+                    Just msg -> withAttr attrError (str msg)
+                            <+> withAttr attrDef (str " ")
+                ReplaceMode -> withAttr attrMode  $ str "-- REPLACE --"
+                InsertMode  -> withAttr attrMode  $ str "-- INSERT --"
+        CmdEx cmdLine -> str ":" <+> renderEditor (str . head) True cmdLine
 --      CmdSearch -> str " "
 
-view :: Model e -> [Widget ResourceName]
+view :: Model -> [Widget ResourceName]
 view m = [ viewEditor m <=> viewStatusBar m <=> viewCmdLine m ]
 
-app :: App (Model e) e ResourceName
+app :: App Model e ResourceName
 app = App { appDraw = view
           , appChooseCursor = showFirstCursor
           , appHandleEvent = update
