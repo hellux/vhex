@@ -200,7 +200,7 @@ scrollTop m = return m { scrollPos = 0 }
 
 curHori :: Int -> Model e -> EventM ResourceName (Model e)
 curHori n m = return m { buffer = Buf.moveTo newPos (buffer m) }
-    where newPos = BU.clamp 0 (bufferLength m -1) (cursorPos m + n)
+    where newPos = BU.clamp 0 (bufferLength m - 1) (cursorPos m + n)
 
 curVert :: Int -> Model e -> EventM ResourceName (Model e)
 curVert n m = viewportSize >>= curVert' where
@@ -313,13 +313,18 @@ insertChar c m =
             Just newWord -> inputCurHori 1 (insertSelection m newWord)
         _ -> replaceChar c m
 
+-- XXX d must be (-1) or 1, maybe use custom data type?
 inputCurHori :: Int -> Model e -> EventM ResourceName (Model e)
 inputCurHori d m = case inputCursor m of
         Nothing -> return m
         Just i ->
-            if 0 < i+d && i+d < displayWidth (bvFocused m)
-                then return m { inputCursor = Just (i+d) }
-                else curHori d m { inputCursor = Just 0 }
+            if i+d < 0 then
+                curHori d m { inputCursor = Just (dw-1) }
+            else if i+d >= dw then
+                curHori d m { inputCursor = Just 0 }
+            else
+                return m { inputCursor = Just (i+d) }
+        where dw = displayWidth (bvFocused m)
 
 inputCurVert :: Int -> Model e -> EventM ResourceName (Model e)
 inputCurVert = curVert
@@ -329,21 +334,21 @@ replaceMode :: Model e -> Event
 replaceMode m vtye = case vtye of
     EvKey (KChar c) [] -> replaceChar c m  >>= continue
     EvKey KLeft  [] -> inputCurHori (-1) m >>= continue
-    EvKey KDown  [] -> inputCurVert 1 m >>= continue
+    EvKey KDown  [] -> inputCurVert   1  m >>= continue
     EvKey KUp    [] -> inputCurVert (-1) m >>= continue
-    EvKey KRight [] -> inputCurHori 1 m >>= continue
+    EvKey KRight [] -> inputCurHori   1  m >>= continue
     EvKey KEsc [] -> continue (enterNormalMode m)
     _ -> continue m
 
 insertMode :: Model e -> Event
             -> EventM ResourceName (Next (Model e))
 insertMode m vtye = case vtye of
-    EvKey (KChar c) [] -> insertChar c m   >>= continue
-    EvKey KLeft  [] -> inputCurHori (-1) m >>= continue
-    EvKey KDown  [] -> inputCurVert 1 m >>= continue
-    EvKey KUp    [] -> inputCurVert (-1) m >>= continue
-    EvKey KRight [] -> inputCurHori 1 m >>= continue
-    EvKey KEsc [] -> continue (enterNormalMode m)
+    EvKey (KChar c) [] -> insertChar c m      >>= continue
+    EvKey KLeft     [] -> inputCurHori (-1) m >>= continue
+    EvKey KDown     [] -> inputCurVert   1  m >>= continue
+    EvKey KUp       [] -> inputCurVert (-1) m >>= continue
+    EvKey KRight    [] -> inputCurHori   1  m >>= continue
+    EvKey KEsc      [] -> continue (enterNormalMode m)
     _ -> continue m
 
 update :: Model e -> BrickEvent ResourceName e
@@ -473,6 +478,9 @@ viewStatusBar m = withAttr attrStatusBar $ str $
     filePath m ++ ": "
     ++ show (cursorPos m) ++ ", "
     ++ show (scrollPos m) ++ "  "
+    ++ case inputCursor m of
+        Nothing -> ""
+        Just i -> show i
 
 viewCmdLine :: Model e -> Widget ResourceName
 viewCmdLine m =
