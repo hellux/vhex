@@ -104,7 +104,7 @@ moveTo pos buf = case selected buf of
 insert :: Word8 -> Buffer -> Buffer
 insert w buf
     | null buf = singleton w
-    | otherwise = buf { selected = Just (w, i+1)
+    | otherwise = buf { selected = Just (w, i)
                       , length = (length buf) + 1
                       , next = B.cons v (next buf)
                       }
