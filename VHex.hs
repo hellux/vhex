@@ -290,6 +290,9 @@ enterInsertMode m = m { mode = InsertMode, inputCursor = Just 0 }
 setSelection :: Model e -> Word8 -> Model e
 setSelection m w = m { buffer = Buf.replace w (buffer m) }
 
+insertSelection :: Model e -> Word8 -> Model e
+insertSelection m w = m { buffer = Buf.insert w (buffer m) }
+
 setChar :: ByteView -> Word8 -> Char -> Int -> Maybe Word8
 setChar bv w c i = (toWord bv) modified
     where current = (fromWord bv) w
@@ -297,20 +300,18 @@ setChar bv w c i = (toWord bv) modified
 
 replaceChar :: Char -> Model e -> EventM ResourceName (Model e)
 replaceChar c m =
-    case inputCursor m >>= (fmap (setSelection m) . (setChar bv (cursorVal m) c)) of
+    case inputCursor m >>= replaceChar' of
         Nothing -> return m
-        Just w -> inputCurHori 1 w
+        Just m' -> inputCurHori 1 m'
     where bv = bvFocused m
+          replaceChar' = fmap (setSelection m) . (setChar bv (cursorVal m) c)
 
 insertChar :: Char -> Model e -> EventM ResourceName (Model e)
 insertChar c m =
     case inputCursor m of
-        Just 0 -> case setChar (bvFocused m) (cursorVal m) c 0 of
+        Just 0 -> case setChar (bvFocused m) 0 c 0 of
             Nothing -> return m
-            Just newWord -> return $
-                setSelection m { buffer = Buf.insert 0 (buffer m)
-                               , inputCursor = Just 1
-                               } newWord
+            Just newWord -> inputCurHori 1 (insertSelection m newWord)
         _ -> replaceChar c m
 
 inputCurHori :: Int -> Model e -> EventM ResourceName (Model e)
