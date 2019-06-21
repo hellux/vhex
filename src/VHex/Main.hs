@@ -363,9 +363,8 @@ inputCurHori d m = case inputCursor m of
 inputCurVert :: Int -> Model -> EventM Name Model
 inputCurVert = curVert
 
-replaceMode :: Event -> Model -> EventM Name Model
-replaceMode vtye = case vtye of
-    EvKey (KChar c) [] -> replaceChar c
+inputMode :: Event -> Model -> EventM Name Model
+inputMode vtye = case vtye of
     EvKey KLeft     [] -> inputCurHori (-1)
     EvKey KDown     [] -> inputCurVert 1
     EvKey KUp       [] -> inputCurVert (-1)
@@ -373,15 +372,15 @@ replaceMode vtye = case vtye of
     EvKey KEsc      [] -> enterNormalMode >>> return
     _ -> return
 
+replaceMode :: Event -> Model -> EventM Name Model
+replaceMode vtye = case vtye of
+    EvKey (KChar c) [] -> replaceChar c
+    _ -> inputMode vtye
+
 insertMode :: Event -> Model -> EventM Name Model
 insertMode vtye = case vtye of
     EvKey (KChar c) [] -> insertChar c
-    EvKey KLeft     [] -> inputCurHori (-1)
-    EvKey KDown     [] -> inputCurVert 1
-    EvKey KUp       [] -> inputCurVert (-1)
-    EvKey KRight    [] -> inputCurHori 1
-    EvKey KEsc      [] -> enterNormalMode >>> return
-    _ -> return
+    _ -> inputMode vtye
 
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
 update m e = case e of
