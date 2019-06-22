@@ -55,9 +55,6 @@ data Model = Model
     , mode :: Mode
     }
 
-(-:) :: t1 -> (t1 -> t2) -> t2
-x -: f = f x
-
 bufferLength :: Model -> Int
 bufferLength = Buf.length . buffer
 
@@ -314,7 +311,7 @@ enterInsertMode :: Model -> Model
 enterInsertMode m = m { mode = InputMode InsertMode 0 }
 
 enterInsertModeAppend :: Model -> Model
-enterInsertModeAppend m = m { buffer = Buf.move 1 (buffer m) } -: enterInsertMode
+enterInsertModeAppend m = m { buffer = Buf.move 1 (buffer m) } & enterInsertMode
 
 replaceSelection :: Word8 -> Model -> Model
 replaceSelection w m = if Buf.null (buffer m)
@@ -337,7 +334,7 @@ setChar bv w c i = toWord bv modified
 replaceChar :: Char -> Int -> InsMode -> Model -> EventM Name Model
 replaceChar c i im m = case setChar bv selected c i of
     Nothing -> return m
-    Just w -> replaceSelection w m -: inputCurHori im i 1
+    Just w -> replaceSelection w m & inputCurHori im i 1
     where bv = bvFocused m
           selected = cursorVal m
 
@@ -345,17 +342,17 @@ insertChar :: Char -> Int -> InsMode -> Model -> EventM Name Model
 insertChar c i im m
     | i == 0 = case setChar (bvFocused m) 0 c i of
         Nothing -> return m
-        Just w -> insertSelection w m -: inputCurHori im i 1
+        Just w -> insertSelection w m & inputCurHori im i 1
     | otherwise = replaceChar c i InsertMode m
 
 inputCurHori :: InsMode -> Int -> Int -> Model -> EventM Name Model
 inputCurHori im i d m
-    | i+d < 0   = m { mode = InputMode im (dw-1) } -: curHori (-1)
+    | i+d < 0   = m { mode = InputMode im (dw-1) } & curHori (-1)
     | i+d >= dw = let newPos = min (cursorPos m + 1) (bufferLength m)
                   in return m { mode = InputMode im 0
                               , buffer = Buf.moveTo newPos (buffer m)
                               }
-    | otherwise = m { mode = InputMode im (i+d)  } -: return
+    | otherwise = m { mode = InputMode im (i+d)  } & return
     where dw = displayWidth (bvFocused m)
 
 inputMode :: InsMode -> Int -> Event -> Model -> EventM Name Model
@@ -529,8 +526,8 @@ app = App { appDraw = view
 vhex :: IO ()
 vhex = do
     args <- getArgs
-    initial <- if not (null args)
-                then openFile (head args) initialModel
-                else return initialModel
-    _ <- defaultMain app initial
+    model <- if not (null args)
+                then initialModel & openFile (head args)
+                else initialModel & return
+    _ <- defaultMain app model
     return ()
