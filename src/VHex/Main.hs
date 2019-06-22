@@ -50,6 +50,7 @@ data Model = Model
     { filePath :: FilePath
     , fileContents :: ByteString
     , buffer :: Buffer
+    , layout :: [ByteView]
     , cursorFocus :: Int            -- focused view by index
     , scrollPos :: Int              -- offset to visible top left byte
     , mode :: Mode
@@ -65,16 +66,13 @@ cursorVal :: Model -> Word8
 cursorVal m = fromMaybe 0 $ Buf.selected (buffer m)
 
 bvFocused :: Model -> ByteView
-bvFocused m = layout !! cursorFocus m
+bvFocused m = (layout m) !! cursorFocus m
 
 bytesPerRowMultiple :: Int
 bytesPerRowMultiple = 4
 
 enableCursorLine :: Bool
 enableCursorLine = True
-
-layout :: [ByteView]
-layout = [ hex, ascii1 ] -- TODO mv to model
 
 -- attributes
 attrDef :: AttrName
@@ -148,16 +146,17 @@ initialModel = Model
     { filePath = ""
     , fileContents = BL.empty
     , buffer = Buf.empty
+    , layout = [ hex, ascii1 ]
     , cursorFocus = 0
     , scrollPos = 0
     , mode = NormalMode (CmdNone Nothing)
     }
 
-bytesPerRow :: Int -> Int -> Int
-bytesPerRow w byteCount = max 1 $ floorN bytesPerRowMultiple maxBytes where
+bytesPerRow :: [ByteView] -> Int -> Int -> Int
+bytesPerRow l w byteCount = max 1 $ floorN bytesPerRowMultiple maxBytes where
     offsetWidth = hexLength $ byteCount - 1
-    linWidth = sum $ map ((+) <$> displayWidth <*> spaceWidth) layout
-    padding = length layout - 1
+    linWidth = sum $ map ((+) <$> displayWidth <*> spaceWidth) l
+    padding = length l - 1
     maxBytes = div (w - offsetWidth - padding) linWidth
 
 openFile :: FilePath -> Model -> IO Model
@@ -175,10 +174,12 @@ saveFile m = do
     res <- try $ BL.writeFile path contents :: IO (Either IOException ())
     case res of
         Left err -> return
-            m { mode = NormalMode $ CmdNone $ Just $ Left (show err) }
+            m { mode = NormalMode
+                     $ CmdNone $ Just $ Left (show err) }
         Right _ -> return
             m { fileContents = contents
-              , mode = NormalMode $ CmdNone $ Just $ Right $ show path ++ " written"
+              , mode = NormalMode
+                     $ CmdNone $ Just $ Right $ show path ++ " written"
               }
 
 viewportSize :: EventM Name (Int, Int)
@@ -191,7 +192,7 @@ viewportSize = do
 scroll :: Int -> Model -> EventM Name Model
 scroll n m = viewportSize >>= scroll' where
     scroll' (w, _) = return
-        m { scrollPos = let perRow = bytesPerRow w (bufferLength m)
+        m { scrollPos = let perRow = bytesPerRow (layout m) w (bufferLength m)
                             prev = scrollPos m
                             maxPos = floorN perRow (bufferLength m - 1)
                         in BU.clamp 0 maxPos (prev + n*perRow) }
@@ -199,7 +200,7 @@ scroll n m = viewportSize >>= scroll' where
 scrollBottom :: Model -> EventM Name Model
 scrollBottom m = viewportSize >>= scrollBottom' where
     scrollBottom' (w, h) = return $
-        let perRow = bytesPerRow w (bufferLength m)
+        let perRow = bytesPerRow (layout m) w (bufferLength m)
             maxPos = bufferLength m - 1
         in m { scrollPos = max 0 $ ceilN perRow (maxPos - perRow*h) }
 
@@ -212,7 +213,7 @@ curHori n m = return m { buffer = Buf.moveTo newPos (buffer m) }
 
 curVert :: Int -> Model -> EventM Name Model
 curVert n m = viewportSize >>= curVert' where
-    curVert' (w, _) = let step = bytesPerRow w (bufferLength m)
+    curVert' (w, _) = let step = bytesPerRow (layout m) w (bufferLength m)
                           newPos = min (bufferLength m - 1)
                                        (cursorPos m + n*step)
                           finalPos = if 0 <= newPos
@@ -223,14 +224,15 @@ curVert n m = viewportSize >>= curVert' where
 
 curBeginning :: Model -> EventM Name Model
 curBeginning m = viewportSize >>= curBeginning' where
-    curBeginning' (w, _) = let perRow = bytesPerRow w (bufferLength m)
+    curBeginning' (w, _) = let perRow = bytesPerRow (layout m) w
+                                                    (bufferLength m)
                                newPos = floorN perRow (cursorPos m)
                            in return
                             m { buffer = Buf.moveTo newPos (buffer m) }
 
 curEnd :: Model -> EventM Name Model
 curEnd m = viewportSize >>= curEnd' where
-    curEnd' (w, _) = let perRow = bytesPerRow w (bufferLength m)
+    curEnd' (w, _) = let perRow = bytesPerRow (layout m) w (bufferLength m)
                          lineEnd = floorN perRow (cursorPos m) + perRow - 1
                          newPos = min lineEnd (bufferLength m - 1)
                      in return
@@ -238,11 +240,11 @@ curEnd m = viewportSize >>= curEnd' where
 
 focusNext :: Model -> EventM Name Model
 focusNext m = return
-    m { cursorFocus = mod (cursorFocus m + 1) (length layout) }
+    m { cursorFocus = mod (cursorFocus m + 1) (length $ layout m) }
 
 focusPrev :: Model -> EventM Name Model
 focusPrev m = return
-    m { cursorFocus = mod (cursorFocus m - 1) (length layout) }
+    m { cursorFocus = mod (cursorFocus m - 1) (length $ layout m) }
 
 executeCmd :: Model -> Editor String Name
            -> EventM Name (Next Model)
@@ -474,7 +476,8 @@ viewBytes bytes perRow
 viewEditor :: Model -> Widget Name
 viewEditor m = Widget Greedy Greedy $ do
     ctx <- getContext
-    let perRow = bytesPerRow (ctx^.availWidthL) (bufferLength m)
+    let perRow = bytesPerRow (layout m) (ctx^.availWidthL)
+                             (bufferLength m)
     let rowCount = ctx^.availHeightL
     let bytes = BL.unpack
               $ Buf.slice (scrollPos m) (rowCount*perRow) (buffer m)
@@ -483,10 +486,10 @@ viewEditor m = Widget Greedy Greedy $ do
     let offset = withAttr attrOffset
                $ viewOffset (scrollPos m) perRow selectedRow
                             (bufferLength m - 1) rowCount
-    let focused = map (\i -> i == cursorFocus m) [0..] :: [Bool]
+    let focused = map ((==) (cursorFocus m)) [0..]
     let views = map (viewBytes bytes perRow
                                (selectedRow, selectedCol) (mode m))
-                    (zip focused layout)
+                    (zip focused $ layout m)
     render
         $ reportExtent EditorViewPort
         $ hBox
