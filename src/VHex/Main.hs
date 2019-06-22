@@ -39,15 +39,12 @@ data Name = EditorViewPort
                   | Cursor
                   deriving (Show, Eq, Ord)
 
-data InputMode_ = ReplaceMode | InsertMode
-
-data Mode = NormalMode
-          | InputMode InputMode_ Int
-
 data CmdLineMode = CmdNone (Maybe (Either String String))
                  | CmdEx (Editor String Name)
---               | CmdSearch
                  deriving (Show)
+data InsMode = ReplaceMode | InsertMode
+data Mode = NormalMode CmdLineMode
+          | InputMode InsMode Int
 
 data Model = Model
     { filePath :: FilePath
@@ -56,7 +53,6 @@ data Model = Model
     , cursorFocus :: Int            -- focused view by index
     , scrollPos :: Int              -- offset to visible top left byte
     , mode :: Mode
-    , cmdMode :: CmdLineMode
     }
 
 (-:) :: t1 -> (t1 -> t2) -> t2
@@ -157,8 +153,7 @@ initialModel = Model
     , buffer = Buf.empty
     , cursorFocus = 0
     , scrollPos = 0
-    , mode = NormalMode
-    , cmdMode = CmdNone Nothing
+    , mode = NormalMode (CmdNone Nothing)
     }
 
 bytesPerRow :: Int -> Int -> Int
@@ -183,10 +178,10 @@ saveFile m = do
     res <- try $ BL.writeFile path contents :: IO (Either IOException ())
     case res of
         Left err -> return
-            m { cmdMode = CmdNone $ Just $ Left (show err) }
+            m { mode = NormalMode $ CmdNone $ Just $ Left (show err) }
         Right _ -> return
             m { fileContents = contents
-              , cmdMode = CmdNone $ Just $ Right $ show path ++ " written"
+              , mode = NormalMode $ CmdNone $ Just $ Right $ show path ++ " written"
               }
 
 viewportSize :: EventM Name (Int, Int)
@@ -258,18 +253,18 @@ executeCmd m cmdLine = case head $ getEditContents cmdLine of
     "q" -> halt m
     "w" -> liftIO (saveFile m') >>= continue
     cmd -> continue
-        m { cmdMode = CmdNone $ Just $ Left ("Invalid command: " ++ cmd) }
+        m { mode = NormalMode $ CmdNone $ Just $ Left ("Invalid command: " ++ cmd) }
     where
-        m' = m { cmdMode = CmdNone Nothing }
+        m' = m { mode = NormalMode $ CmdNone Nothing }
 
 updateExCmd :: Model -> Event -> Editor String Name -> EventM Name (Next Model)
 updateExCmd m vtye cmdLine =
     case vtye of
-        EvKey KEsc   [] -> continue $ m { cmdMode = CmdNone Nothing }
+        EvKey KEsc   [] -> continue $ m { mode = NormalMode $ CmdNone Nothing }
         EvKey KEnter [] -> executeCmd m cmdLine
         _ -> do
             cmdLine' <- handleEditorEvent vtye cmdLine
-            continue m { cmdMode = CmdEx cmdLine' }
+            continue m { mode = NormalMode $ CmdEx cmdLine' }
 
 normalMode :: Event -> Model -> EventM Name Model
 normalMode vtye = case vtye of
@@ -302,12 +297,10 @@ normalMode vtye = case vtye of
     _ -> return
 
 enterCmdLine :: Model -> Model
-enterCmdLine m = m { cmdMode = CmdEx (editor CmdLine (Just 1) "") }
+enterCmdLine m = m { mode = NormalMode $ CmdEx (editor CmdLine (Just 1) "") }
 
 enterNormalMode :: Model -> Model
-enterNormalMode m = m { mode = NormalMode
-                      , cmdMode = CmdNone Nothing -- clear info/error msg
-                      }
+enterNormalMode m = m { mode = NormalMode $ CmdNone Nothing }
 
 enterReplaceMode :: Model -> Model
 enterReplaceMode m
@@ -335,28 +328,28 @@ setChar bv w c i = toWord bv modified
     where current = fromWord bv w
           modified = current & ix i .~ c
 
-replaceChar :: Char -> Int -> InputMode_ -> Model -> EventM Name Model
+replaceChar :: Char -> Int -> InsMode -> Model -> EventM Name Model
 replaceChar c i im m = case setChar bv selected c i of
     Nothing -> return m
     Just w -> replaceSelection w m -: inputCurHori im i 1
     where bv = bvFocused m
           selected = cursorVal m
 
-insertChar :: Char -> Int -> InputMode_ -> Model -> EventM Name Model
+insertChar :: Char -> Int -> InsMode -> Model -> EventM Name Model
 insertChar c i im m
     | i == 0 = case setChar (bvFocused m) 0 c i of
         Nothing -> return m
         Just w -> insertSelection w m -: inputCurHori im i 1
     | otherwise = replaceChar c i InsertMode m
 
-inputCurHori :: InputMode_ -> Int -> Int -> Model -> EventM Name Model
+inputCurHori :: InsMode -> Int -> Int -> Model -> EventM Name Model
 inputCurHori im i d m
     | i+d < 0   = m { mode = InputMode im (dw-1) } -: curHori (-1)
     | i+d >= dw = m { mode = InputMode im 0      } -: curHori 1
     | otherwise = m { mode = InputMode im (i+d)  } -: return
     where dw = displayWidth (bvFocused m)
 
-inputMode :: InputMode_ -> Int -> Event -> Model -> EventM Name Model
+inputMode :: InsMode -> Int -> Event -> Model -> EventM Name Model
 inputMode im inputCursor vtye = case vtye of
     EvKey KLeft     [] -> inputCurHori im inputCursor (-1)
     EvKey KDown     [] -> curVert 1
@@ -378,7 +371,7 @@ insertMode inputCursor vtye = case vtye of
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
 update m e = case e of
     VtyEvent vtye -> case mode m of
-        NormalMode -> case cmdMode m of
+        NormalMode cm -> case cm of
             CmdEx cmdLine -> updateExCmd m vtye cmdLine
             CmdNone _ -> normalMode vtye m >>= continue
         InputMode im i -> case im of
@@ -451,7 +444,7 @@ viewBytes bytes perRow
         | c /= selectedCol || r /= selectedRow = col
         | not focused = withAttr attrSelected col
         | otherwise = case mode_ of
-            NormalMode -> withAttr attrSelectedFocused col
+            NormalMode _ -> withAttr attrSelectedFocused col
             InputMode _ i -> showCursor Cursor (Location (i, 0)) col
     styleRow r row =
         let attr = if enableCursorLine && r == selectedRow
@@ -501,21 +494,17 @@ viewStatusBar m = withAttr attrStatusBar $ str $
     ++ show (scrollPos m) ++ "  "
 
 viewCmdLine :: Model -> Widget Name
-viewCmdLine m =
-    case cmdMode m of
-        CmdNone errorMsg ->
-            case mode m of
-                NormalMode -> case errorMsg of
-                    Nothing -> str " "
-                    Just msg -> case msg of
-                        Left err -> withAttr attrError (str err)
-                                    <+> withAttr attrDef (str " ")
-                        Right info -> withAttr attrDef (str info)
-                InputMode im _ -> case im of
-                    ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
-                    InsertMode -> withAttr attrMode $ str "-- INSERT --"
+viewCmdLine m = case mode m of
+    NormalMode cm -> case cm of
+        CmdNone Nothing -> str " "
+        CmdNone (Just (Left errorMsg)) ->
+            withAttr attrError (str errorMsg) <+> withAttr attrDef (str " ")
+        CmdNone (Just (Right infoMsg)) ->
+            withAttr attrDef (str infoMsg)
         CmdEx cmdLine -> str ":" <+> renderEditor (str . head) True cmdLine
---      CmdSearch -> str " "
+    InputMode im _ -> case im of
+        ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
+        InsertMode -> withAttr attrMode $ str "-- INSERT --"
 
 view :: Model -> [Widget Name]
 view m = [ viewEditor m <=> viewStatusBar m <=> viewCmdLine m ]
