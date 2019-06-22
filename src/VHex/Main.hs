@@ -62,10 +62,10 @@ bufferLength :: Model -> Int
 bufferLength = Buf.length . buffer
 
 cursorPos :: Model -> Int
-cursorPos m = fromMaybe 0 $ Buf.selectedIndex (buffer m)
+cursorPos m = Buf.location (buffer m)
 
 cursorVal :: Model -> Word8
-cursorVal m = fromMaybe 0 $ Buf.selectedValue (buffer m)
+cursorVal m = fromMaybe 0 $ Buf.selected (buffer m)
 
 bvFocused :: Model -> ByteView
 bvFocused m = layout !! cursorFocus m
@@ -289,8 +289,7 @@ normalMode vtye = case vtye of
     EvKey (KChar 'G')  []      -> scrollBottom
     EvKey (KChar 'r')  []      -> enterReplaceMode >>> return
     EvKey (KChar 'i')  []      -> enterInsertMode >>> return
-    -- TODO fix append behaviour on last char
-    EvKey (KChar 'a')  []      -> curHori 1 >=> enterInsertMode >>> return
+    EvKey (KChar 'a')  []      -> enterInsertModeAppend >>> return
     EvKey (KChar 'x')  []      -> removeSelection >>> return
     EvKey (KChar 'X')  []      -> curHori (-1) >=> removeSelection >>> return
     EvKey (KChar ':')  []      -> enterCmdLine >>> return
@@ -300,7 +299,11 @@ enterCmdLine :: Model -> Model
 enterCmdLine m = m { mode = NormalMode $ CmdEx (editor CmdLine (Just 1) "") }
 
 enterNormalMode :: Model -> Model
-enterNormalMode m = m { mode = NormalMode $ CmdNone Nothing }
+enterNormalMode m = m { mode = NormalMode $ CmdNone Nothing
+                      , buffer = Buf.moveTo newLoc buf
+                      }
+    where buf = buffer m
+          newLoc = min (Buf.location buf) (Buf.length buf - 1)
 
 enterReplaceMode :: Model -> Model
 enterReplaceMode m
@@ -309,6 +312,9 @@ enterReplaceMode m
 
 enterInsertMode :: Model -> Model
 enterInsertMode m = m { mode = InputMode InsertMode 0 }
+
+enterInsertModeAppend :: Model -> Model
+enterInsertModeAppend m = m { buffer = Buf.move 1 (buffer m) } -: enterInsertMode
 
 replaceSelection :: Word8 -> Model -> Model
 replaceSelection w m = if Buf.null (buffer m)
@@ -345,7 +351,10 @@ insertChar c i im m
 inputCurHori :: InsMode -> Int -> Int -> Model -> EventM Name Model
 inputCurHori im i d m
     | i+d < 0   = m { mode = InputMode im (dw-1) } -: curHori (-1)
-    | i+d >= dw = m { mode = InputMode im 0      } -: curHori 1
+    | i+d >= dw = let newPos = min (cursorPos m + 1) (bufferLength m)
+                  in return m { mode = InputMode im 0
+                              , buffer = Buf.moveTo newPos (buffer m)
+                              }
     | otherwise = m { mode = InputMode im (i+d)  } -: return
     where dw = displayWidth (bvFocused m)
 
@@ -454,14 +463,15 @@ viewBytes bytes perRow
     emptyByte = str $ replicate (displayWidth bv) ' '
     space     = str $ replicate (spaceWidth bv) ' '
     rows = ( zipWith styleRow [0..]
-           . fmap ( hBox
-                  . (:) (str "  ")
-                  . intersperse space
-                  . padOut perRow emptyByte
-                  )
+           . map ( hBox
+                 . (:) (str "  ")
+                 . intersperse space
+                 . padOut perRow emptyByte
+                 )
            . groupsOf perRow
            . zipWith styleCol [ (div i perRow, mod i perRow) | i <- [0..] ]
-           . fmap (str . fromWord bv)
+           . (++ [emptyByte])
+           . map (str . fromWord bv)
            ) bytes
 
 viewEditor :: Model -> Widget Name
@@ -469,10 +479,8 @@ viewEditor m = Widget Greedy Greedy $ do
     ctx <- getContext
     let perRow = bytesPerRow (ctx^.availWidthL) (bufferLength m)
     let rowCount = ctx^.availHeightL
-    let bytes = let byteCount = fromIntegral $ rowCount*perRow
-                    start = fromIntegral $ scrollPos m
-                    visibleBytes = Buf.slice start byteCount (buffer m)
-                in BL.unpack visibleBytes
+    let bytes = BL.unpack
+              $ Buf.slice (scrollPos m) (rowCount*perRow) (buffer m)
     let selectedRow = div (cursorPos m - scrollPos m) perRow
     let selectedCol = mod (cursorPos m) perRow
     let offset = withAttr attrOffset
@@ -491,6 +499,7 @@ viewStatusBar :: Model -> Widget Name
 viewStatusBar m = withAttr attrStatusBar $ str $
     filePath m ++ ": "
     ++ show (cursorPos m) ++ ", "
+    ++ show (cursorVal m) ++ ", "
     ++ show (scrollPos m) ++ "  "
 
 viewCmdLine :: Model -> Widget Name
