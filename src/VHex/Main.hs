@@ -1,8 +1,8 @@
+{-# LANGUAGE RankNTypes #-}
 module VHex.Main (vhex) where
 
 import System.IO (FilePath)
 import System.Environment (getArgs)
---import System.Posix (getFileStatus, fileSize)
 
 import Data.Bits ((.&.), shiftR, shiftL)
 import Data.Word (Word8)
@@ -13,7 +13,7 @@ import Data.Maybe (fromMaybe)
 import Control.Monad (liftM2, (>=>))
 import Control.Category ((>>>))
 import Control.Monad.IO.Class (liftIO)
-import Control.Exception --(try, IOException(..))
+import Control.Exception (try, IOException)
 
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BL
@@ -39,9 +39,10 @@ data Name = EditorViewPort
                   | Cursor
                   deriving (Show, Eq, Ord)
 
+data InputMode_ = ReplaceMode | InsertMode
+
 data Mode = NormalMode
-          | ReplaceMode
-          | InsertMode
+          | InputMode InputMode_ Int
 
 data CmdLineMode = CmdNone (Maybe (Either String String))
                  | CmdEx (Editor String Name)
@@ -54,10 +55,12 @@ data Model = Model
     , buffer :: Buffer
     , cursorFocus :: Int            -- focused view by index
     , scrollPos :: Int              -- offset to visible top left byte
-    , inputCursor :: Maybe Int -- TODO mv to mode
     , mode :: Mode
     , cmdMode :: CmdLineMode
     }
+
+(-:) :: t1 -> (t1 -> t2) -> t2
+x -: f = f x
 
 bufferLength :: Model -> Int
 bufferLength = Buf.length . buffer
@@ -154,7 +157,6 @@ initialModel = Model
     , buffer = Buf.empty
     , cursorFocus = 0
     , scrollPos = 0
-    , inputCursor = Nothing
     , mode = NormalMode
     , cmdMode = CmdNone Nothing
     }
@@ -169,7 +171,6 @@ bytesPerRow w byteCount = max 1 $ floorN bytesPerRowMultiple maxBytes where
 openFile :: FilePath -> Model -> IO Model
 openFile path m = do
     contents <- BL.readFile path
-    --len <- fmap (fromIntegral . fileSize) (getFileStatus path)
     return m { filePath = path
              , fileContents = contents
              , buffer = Buf.buffer contents
@@ -305,25 +306,24 @@ enterCmdLine m = m { cmdMode = CmdEx (editor CmdLine (Just 1) "") }
 
 enterNormalMode :: Model -> Model
 enterNormalMode m = m { mode = NormalMode
-                      , inputCursor = Nothing
                       , cmdMode = CmdNone Nothing -- clear info/error msg
                       }
 
 enterReplaceMode :: Model -> Model
 enterReplaceMode m
     | Buf.null (buffer m) = m
-    | otherwise = m { mode = ReplaceMode, inputCursor = Just 0 }
+    | otherwise = m { mode = InputMode ReplaceMode 0 }
 
 enterInsertMode :: Model -> Model
-enterInsertMode m = m { mode = InsertMode, inputCursor = Just 0 }
+enterInsertMode m = m { mode = InputMode InsertMode 0 }
 
-setSelection :: Model -> Word8 -> Model
-setSelection m w = if Buf.null (buffer m)
+replaceSelection :: Word8 -> Model -> Model
+replaceSelection w m = if Buf.null (buffer m)
     then m
     else m { buffer = Buf.replace w (buffer m) }
 
-insertSelection :: Model -> Word8 -> Model
-insertSelection m w = m { buffer = Buf.insert w (buffer m) }
+insertSelection :: Word8 -> Model -> Model
+insertSelection w m = m { buffer = Buf.insert w (buffer m) }
 
 removeSelection :: Model -> Model
 removeSelection m = if Buf.null (buffer m)
@@ -335,52 +335,45 @@ setChar bv w c i = toWord bv modified
     where current = fromWord bv w
           modified = current & ix i .~ c
 
-replaceChar :: Char -> Model -> EventM Name Model
-replaceChar c m =
-    case inputCursor m >>= replaceChar' of
-        Nothing -> return m
-        Just m' -> inputCurHori 1 m'
+replaceChar :: Char -> Int -> InputMode_ -> Model -> EventM Name Model
+replaceChar c i im m = case setChar bv selected c i of
+    Nothing -> return m
+    Just w -> replaceSelection w m -: inputCurHori im i 1
     where bv = bvFocused m
-          replaceChar' = fmap (setSelection m) . setChar bv (cursorVal m) c
+          selected = cursorVal m
 
-insertChar :: Char -> Model -> EventM Name Model
-insertChar c m =
-    case inputCursor m of
-        Just 0 -> case setChar (bvFocused m) 0 c 0 of
-            Nothing -> return m
-            Just newWord -> inputCurHori 1 (insertSelection m newWord)
-        _ -> replaceChar c m
-
--- XXX d must be (-1) or 1, maybe use custom data type?
-inputCurHori :: Int -> Model -> EventM Name Model
-inputCurHori d m = case inputCursor m of
+insertChar :: Char -> Int -> InputMode_ -> Model -> EventM Name Model
+insertChar c i im m
+    | i == 0 = case setChar (bvFocused m) 0 c i of
         Nothing -> return m
-        Just i | i+d < 0   -> curHori d m { inputCursor = Just (dw-1) }
-               | i+d >= dw -> curHori d m { inputCursor = Just 0 }
-               | otherwise -> return m { inputCursor = Just (i+d) }
-        where dw = displayWidth (bvFocused m)
+        Just w -> insertSelection w m -: inputCurHori im i 1
+    | otherwise = replaceChar c i InsertMode m
 
-inputCurVert :: Int -> Model -> EventM Name Model
-inputCurVert = curVert
+inputCurHori :: InputMode_ -> Int -> Int -> Model -> EventM Name Model
+inputCurHori im i d m
+    | i+d < 0   = m { mode = InputMode im (dw-1) } -: curHori (-1)
+    | i+d >= dw = m { mode = InputMode im 0      } -: curHori 1
+    | otherwise = m { mode = InputMode im (i+d)  } -: return
+    where dw = displayWidth (bvFocused m)
 
-inputMode :: Event -> Model -> EventM Name Model
-inputMode vtye = case vtye of
-    EvKey KLeft     [] -> inputCurHori (-1)
-    EvKey KDown     [] -> inputCurVert 1
-    EvKey KUp       [] -> inputCurVert (-1)
-    EvKey KRight    [] -> inputCurHori 1
+inputMode :: InputMode_ -> Int -> Event -> Model -> EventM Name Model
+inputMode im inputCursor vtye = case vtye of
+    EvKey KLeft     [] -> inputCurHori im inputCursor (-1)
+    EvKey KDown     [] -> curVert 1
+    EvKey KUp       [] -> curVert (-1)
+    EvKey KRight    [] -> inputCurHori im inputCursor 1
     EvKey KEsc      [] -> enterNormalMode >>> return
     _ -> return
 
-replaceMode :: Event -> Model -> EventM Name Model
-replaceMode vtye = case vtye of
-    EvKey (KChar c) [] -> replaceChar c
-    _ -> inputMode vtye
+replaceMode :: Int -> Event -> Model -> EventM Name Model
+replaceMode inputCursor vtye = case vtye of
+    EvKey (KChar c) [] -> replaceChar c inputCursor ReplaceMode
+    _ -> inputMode ReplaceMode inputCursor vtye
 
-insertMode :: Event -> Model -> EventM Name Model
-insertMode vtye = case vtye of
-    EvKey (KChar c) [] -> insertChar c
-    _ -> inputMode vtye
+insertMode :: Int -> Event -> Model -> EventM Name Model
+insertMode inputCursor vtye = case vtye of
+    EvKey (KChar c) [] -> insertChar c inputCursor InsertMode
+    _ -> inputMode InsertMode inputCursor vtye
 
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
 update m e = case e of
@@ -388,8 +381,9 @@ update m e = case e of
         NormalMode -> case cmdMode m of
             CmdEx cmdLine -> updateExCmd m vtye cmdLine
             CmdNone _ -> normalMode vtye m >>= continue
-        ReplaceMode -> replaceMode vtye m >>= continue
-        InsertMode -> insertMode vtye m >>= continue
+        InputMode im i -> case im of
+            ReplaceMode -> replaceMode i vtye m >>= continue
+            InsertMode -> insertMode i vtye m >>= continue
     _ -> continue m
 
 -- character length of hex representation of number
@@ -448,17 +442,17 @@ viewOffset start step selected maxAddr rowCount = vBox rows where
            . fmap (str . display)
            ) [start, start+step..]
 
-viewBytes :: [Word8] -> Int -> (Int, Int) -> Maybe Int -> (Bool, ByteView)
+viewBytes :: [Word8] -> Int -> (Int, Int) -> Mode -> (Bool, ByteView)
           -> Widget Name
 viewBytes bytes perRow
-          (selectedRow, selectedCol) ic
+          (selectedRow, selectedCol) mode_
           (focused, bv) = vBox rows where
     styleCol (r, c) col
         | c /= selectedCol || r /= selectedRow = col
         | not focused = withAttr attrSelected col
-        | otherwise = case ic of
-            Nothing -> withAttr attrSelectedFocused col
-            Just i -> showCursor Cursor (Location (i, 0)) col
+        | otherwise = case mode_ of
+            NormalMode -> withAttr attrSelectedFocused col
+            InputMode _ i -> showCursor Cursor (Location (i, 0)) col
     styleRow r row =
         let attr = if enableCursorLine && r == selectedRow
                     then attrCursorLine
@@ -493,7 +487,7 @@ viewEditor m = Widget Greedy Greedy $ do
                             (bufferLength m - 1) rowCount
     let focused = map (\i -> i == cursorFocus m) [0..] :: [Bool]
     let views = map (viewBytes bytes perRow
-                               (selectedRow, selectedCol) (inputCursor m))
+                               (selectedRow, selectedCol) (mode m))
                     (zip focused layout)
     render
         $ reportExtent EditorViewPort
@@ -505,23 +499,21 @@ viewStatusBar m = withAttr attrStatusBar $ str $
     filePath m ++ ": "
     ++ show (cursorPos m) ++ ", "
     ++ show (scrollPos m) ++ "  "
-    ++ case inputCursor m of
-        Nothing -> ""
-        Just i -> show i
 
 viewCmdLine :: Model -> Widget Name
 viewCmdLine m =
     case cmdMode m of
         CmdNone errorMsg ->
             case mode m of
-                NormalMode  -> case errorMsg of
+                NormalMode -> case errorMsg of
                     Nothing -> str " "
                     Just msg -> case msg of
                         Left err -> withAttr attrError (str err)
                                     <+> withAttr attrDef (str " ")
                         Right info -> withAttr attrDef (str info)
-                ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
-                InsertMode  -> withAttr attrMode $ str "-- INSERT --"
+                InputMode im _ -> case im of
+                    ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
+                    InsertMode -> withAttr attrMode $ str "-- INSERT --"
         CmdEx cmdLine -> str ":" <+> renderEditor (str . head) True cmdLine
 --      CmdSearch -> str " "
 
