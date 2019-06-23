@@ -38,12 +38,21 @@ data Name = EditorViewPort
                   | Cursor
                   deriving (Show, Eq, Ord)
 
-data CmdLineMode = CmdNone (Maybe (Either String String))
+data CmdLineMode = CmdNone
+                    (Maybe
+                        (Either
+                            String   -- error message
+                            String)) -- info message
                  | CmdEx (Editor String Name)
                  deriving (Show)
+
 data InsMode = ReplaceMode | InsertMode
-data Mode = NormalMode CmdLineMode
-          | InputMode InsMode Int
+
+data Mode = NormalMode
+                CmdLineMode
+          | InputMode
+                InsMode
+                Int     -- cursor position on selected byte
 
 data Model = Model
     { filePath :: FilePath
@@ -214,7 +223,7 @@ viewportSize = do
         Just (Extent _ _ dims _) -> return dims
 
 scroll :: Int -> Model -> EventM Name Model
-scroll n m = viewportSize >>= scroll' where
+scroll n m = viewportSize >>= scroll' >>= keepCursor where
     scroll' (w, _) = return
         m { scrollPos = let perRow = bytesPerRow (layout m) w (bufLen m)
                             prev = scrollPos m
@@ -222,7 +231,7 @@ scroll n m = viewportSize >>= scroll' where
                         in BU.clamp 0 maxPos (prev + n*perRow) }
 
 scrollHalfPage :: Direction -> Model -> EventM Name Model
-scrollHalfPage dir m = viewportSize >>= scrollHalfPage' where
+scrollHalfPage dir m = viewportSize >>= scrollHalfPage' >>= followCursor where
     scrollHalfPage' (w, h) =
         m { scrollPos = let prev = scrollPos m
                             maxPos = floorN perRow (bufLen m - 1)
@@ -262,11 +271,12 @@ goToBottom m = moveTo (bufLen m - 1) m
 goToTop :: Model -> Model
 goToTop = moveTo 0
 
-curHori :: Int -> Model -> Model
-curHori n m = m & moveTo (BU.clamp 0 (bufLen m - 1) (cursorPos m + n))
+curHori :: Int -> Model -> EventM Name Model
+curHori n m = m & moveTo newPos & followCursor
+    where newPos = BU.clamp 0 (bufLen m - 1) (cursorPos m + n)
 
 curVert :: Int -> Model -> EventM Name Model
-curVert n m = viewportSize >>= curVert' where
+curVert n m = viewportSize >>= curVert' >>= followCursor where
     curVert' (w, _) = let step = bytesPerRow (layout m) w (bufLen m)
                           newPos = min (bufLen m - 1)
                                        (cursorPos m + n*step)
@@ -315,30 +325,30 @@ updateExCmd m vtye cmdLine =
 
 normalMode :: Event -> Model -> EventM Name Model
 normalMode vtye = case vtye of
-    EvKey (KChar 'h')  []      -> curHori (-1) >>> followCursor
-    EvKey KLeft        []      -> curHori (-1) >>> followCursor
-    EvKey (KChar 'j')  []      -> curVert 1 >=> followCursor
-    EvKey KDown        []      -> curVert 1 >=> followCursor
-    EvKey (KChar 'k')  []      -> curVert (-1) >=> followCursor
-    EvKey KUp          []      -> curVert (-1) >=> followCursor
-    EvKey (KChar 'l')  []      -> curHori 1 >>> followCursor
-    EvKey KRight       []      -> curHori 1 >>> followCursor
+    EvKey (KChar 'h')  []      -> curHori (-1)
+    EvKey KLeft        []      -> curHori (-1)
+    EvKey (KChar 'j')  []      -> curVert 1
+    EvKey KDown        []      -> curVert 1
+    EvKey (KChar 'k')  []      -> curVert (-1)
+    EvKey KUp          []      -> curVert (-1)
+    EvKey (KChar 'l')  []      -> curHori 1
+    EvKey KRight       []      -> curHori 1
     EvKey (KChar '0')  []      -> curBeginning
     EvKey (KChar '^')  []      -> curBeginning
     EvKey (KChar '$')  []      -> curEnd
     EvKey (KChar '\t') []      -> focusNext >>> return
     EvKey KBackTab     []      -> focusPrev >>> return
-    EvKey (KChar 'y')  [MCtrl] -> scroll (-1) >=> keepCursor
-    EvKey (KChar 'e')  [MCtrl] -> scroll 1 >=> keepCursor
-    EvKey (KChar 'u')  [MCtrl] -> scrollHalfPage Up >=> followCursor
-    EvKey (KChar 'd')  [MCtrl] -> scrollHalfPage Down >=> followCursor
+    EvKey (KChar 'y')  [MCtrl] -> scroll (-1)
+    EvKey (KChar 'e')  [MCtrl] -> scroll 1
+    EvKey (KChar 'u')  [MCtrl] -> scrollHalfPage Up
+    EvKey (KChar 'd')  [MCtrl] -> scrollHalfPage Down
     EvKey (KChar 'g')  []      -> goToTop >>> followCursor
     EvKey (KChar 'G')  []      -> goToBottom >>> followCursor
     EvKey (KChar 'r')  []      -> enterReplaceMode >>> return
     EvKey (KChar 'i')  []      -> enterInsertMode >>> return
     EvKey (KChar 'a')  []      -> enterInsertModeAppend >>> return
     EvKey (KChar 'x')  []      -> remove >>> return
-    EvKey (KChar 'X')  []      -> curHori (-1) >>> remove >>> return
+    EvKey (KChar 'X')  []      -> curHori (-1) >=> remove >>> return
     EvKey (KChar ':')  []      -> enterCmdLine >>> return
     _ -> return
 
@@ -366,46 +376,46 @@ setChar bv w c i = toWord bv modified
     where current = fromWord bv w
           modified = current & ix i .~ c
 
-replaceChar :: Char -> Int -> InsMode -> Model -> Model
+replaceChar :: Char -> Int -> InsMode -> Model -> EventM Name Model
 replaceChar c i im m = case setChar bv selected c i of
-    Nothing -> m
-    Just w -> replace w m & inputCurHori im i 1
+    Nothing -> m & return
+    Just w -> m & replace w & inputCurHori im i 1
     where bv = bvFocused m
           selected = cursorVal m
 
-insertChar :: Char -> Int -> InsMode -> Model -> Model
+insertChar :: Char -> Int -> InsMode -> Model -> EventM Name Model
 insertChar c i im m
     | i == 0 = case setChar (bvFocused m) 0 c i of
-        Nothing -> m
+        Nothing -> m & return
         Just w -> insert w m & inputCurHori im i 1
     | otherwise = replaceChar c i InsertMode m
 
-inputCurHori :: InsMode -> Int -> Int -> Model -> Model
+inputCurHori :: InsMode -> Int -> Int -> Model -> EventM Name Model
 inputCurHori im i d m
     | i+d < 0   = m { mode = InputMode im (dw-1) } & curHori (-1)
     | i+d >= dw = let newPos = min (cursorPos m + 1) (bufLen m)
-                  in m { mode = InputMode im 0 } & moveTo newPos
-    | otherwise = m { mode = InputMode im (i+d) }
+                  in m { mode = InputMode im 0 } & moveTo newPos & followCursor
+    | otherwise = m { mode = InputMode im (i+d) } & return
     where dw = displayWidth (bvFocused m)
 
 inputMode :: InsMode -> Int -> Event -> Model -> EventM Name Model
 inputMode im inputCursor vtye = case vtye of
-    EvKey KLeft     [] -> inputCurHori im inputCursor (-1) >>> return
+    EvKey KLeft     [] -> inputCurHori im inputCursor (-1)
     EvKey KDown     [] -> curVert 1
     EvKey KUp       [] -> curVert (-1)
-    EvKey KRight    [] -> inputCurHori im inputCursor 1 >>> return
+    EvKey KRight    [] -> inputCurHori im inputCursor 1
     EvKey KEsc      [] -> enterNormalMode >>> return
     _ -> return
 
 replaceMode :: Int -> Event -> Model -> EventM Name Model
-replaceMode inputCursor vtye = case vtye of
-    EvKey (KChar c) [] -> replaceChar c inputCursor ReplaceMode >>> return
-    _ -> inputMode ReplaceMode inputCursor vtye
+replaceMode ic vtye = case vtye of
+    EvKey (KChar c) [] -> replaceChar c ic ReplaceMode
+    _ -> inputMode ReplaceMode ic vtye
 
 insertMode :: Int -> Event -> Model -> EventM Name Model
-insertMode inputCursor vtye = case vtye of
-    EvKey (KChar c) [] -> insertChar c inputCursor InsertMode >>> return
-    _ -> inputMode InsertMode inputCursor vtye
+insertMode ic vtye = case vtye of
+    EvKey (KChar c) [] -> insertChar c ic InsertMode
+    _ -> inputMode InsertMode ic vtye
 
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
 update m e = case e of
