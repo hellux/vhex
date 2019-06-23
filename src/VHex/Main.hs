@@ -55,8 +55,8 @@ data Model = Model
     , mode :: Mode
     }
 
-bufferLength :: Model -> Int
-bufferLength = Buf.length . buffer
+bufLen :: Model -> Int
+bufLen = Buf.length . buffer
 
 cursorPos :: Model -> Int
 cursorPos m = Buf.location (buffer m)
@@ -216,30 +216,29 @@ viewportSize = do
 scroll :: Int -> Model -> EventM Name Model
 scroll n m = viewportSize >>= scroll' where
     scroll' (w, _) = return
-        m { scrollPos = let perRow = bytesPerRow (layout m) w (bufferLength m)
+        m { scrollPos = let perRow = bytesPerRow (layout m) w (bufLen m)
                             prev = scrollPos m
-                            maxPos = floorN perRow (bufferLength m - 1)
+                            maxPos = floorN perRow (bufLen m - 1)
                         in BU.clamp 0 maxPos (prev + n*perRow) }
 
 scrollHalfPage :: Direction -> Model -> EventM Name Model
 scrollHalfPage dir m = viewportSize >>= scrollHalfPage' where
     scrollHalfPage' (w, h) =
         m { scrollPos = let prev = scrollPos m
-                            maxPos = floorN perRow (bufferLength m - 1)
+                            maxPos = floorN perRow (bufLen m - 1)
                         in BU.clamp 0 maxPos (prev + diff)
           } & moveTo newCursor & return
         where jump = (div h 2) * perRow
               diff = case dir of
                         Up -> -jump
                         Down -> jump
-              perRow = bytesPerRow (layout m) w (bufferLength m)
-              newCursor = BU.clamp 0 (bufferLength m-1) (cursorPos m+diff)
+              perRow = bytesPerRow (layout m) w (bufLen m)
+              newCursor = BU.clamp 0 (bufLen m-1) (cursorPos m+diff)
 
 -- keep cursor in view when scrolling
 keepCursor :: Model -> EventM Name Model
 keepCursor m = viewportSize >>= keepCursor' where
-    keepCursor' (w, h) = let perRow = bytesPerRow (layout m) w
-                                      (bufferLength m)
+    keepCursor' (w, h) = let perRow = bytesPerRow (layout m) w (bufLen m)
                              curRow = div (cursorPos m - scrollPos m) perRow
                              newRow = BU.clamp scrollOff (h-scrollOff-1) curRow
                              newPos = (cursorPos m) + ((newRow-curRow)*perRow)
@@ -249,8 +248,8 @@ keepCursor m = viewportSize >>= keepCursor' where
 followCursor :: Model -> EventM Name Model
 followCursor m = viewportSize >>= followCursor' where
     followCursor' (w, h) =
-        let perRow = bytesPerRow (layout m) w (bufferLength m)
-            bottomMargin = bufferLength m-1-perRow*(h-1)
+        let perRow = bytesPerRow (layout m) w (bufLen m)
+            bottomMargin = bufLen m-1-perRow*(h-1)
             upperMargin = (cursorPos m) + perRow*(scrollOff+1-h)
             minPos = BU.clamp 0 upperMargin bottomMargin
             lowerMargin = (cursorPos m) - perRow*scrollOff
@@ -258,19 +257,18 @@ followCursor m = viewportSize >>= followCursor' where
         in return m { scrollPos = floorN perRow newPos }
 
 goToBottom :: Model -> Model
-goToBottom m = moveTo (bufferLength m - 1) m
+goToBottom m = moveTo (bufLen m - 1) m
 
 goToTop :: Model -> Model
 goToTop = moveTo 0
 
 curHori :: Int -> Model -> Model
-curHori n m = moveTo newPos m
-    where newPos = BU.clamp 0 (bufferLength m - 1) (cursorPos m + n)
+curHori n m = m & moveTo (BU.clamp 0 (bufLen m - 1) (cursorPos m + n))
 
 curVert :: Int -> Model -> EventM Name Model
 curVert n m = viewportSize >>= curVert' where
-    curVert' (w, _) = let step = bytesPerRow (layout m) w (bufferLength m)
-                          newPos = min (bufferLength m - 1)
+    curVert' (w, _) = let step = bytesPerRow (layout m) w (bufLen m)
+                          newPos = min (bufLen m - 1)
                                        (cursorPos m + n*step)
                           finalPos = if 0 <= newPos
                                         then newPos
@@ -279,16 +277,15 @@ curVert n m = viewportSize >>= curVert' where
 
 curBeginning :: Model -> EventM Name Model
 curBeginning m = viewportSize >>= curBeginning' where
-    curBeginning' (w, _) = let perRow = bytesPerRow (layout m) w
-                                                    (bufferLength m)
+    curBeginning' (w, _) = let perRow = bytesPerRow (layout m) w (bufLen m)
                                newPos = floorN perRow (cursorPos m)
                            in return $ moveTo newPos m
 
 curEnd :: Model -> EventM Name Model
 curEnd m = viewportSize >>= curEnd' where
-    curEnd' (w, _) = let perRow = bytesPerRow (layout m) w (bufferLength m)
+    curEnd' (w, _) = let perRow = bytesPerRow (layout m) w (bufLen m)
                          lineEnd = floorN perRow (cursorPos m) + perRow - 1
-                         newPos = min lineEnd (bufferLength m - 1)
+                         newPos = min lineEnd (bufLen m - 1)
                      in return $ moveTo newPos m
 
 focusNext :: Model -> Model
@@ -386,7 +383,7 @@ insertChar c i im m
 inputCurHori :: InsMode -> Int -> Int -> Model -> Model
 inputCurHori im i d m
     | i+d < 0   = m { mode = InputMode im (dw-1) } & curHori (-1)
-    | i+d >= dw = let newPos = min (cursorPos m + 1) (bufferLength m)
+    | i+d >= dw = let newPos = min (cursorPos m + 1) (bufLen m)
                   in m { mode = InputMode im 0 } & moveTo newPos
     | otherwise = m { mode = InputMode im (i+d) }
     where dw = displayWidth (bvFocused m)
@@ -504,8 +501,7 @@ viewBytes bytes perRow
 viewEditor :: Model -> Widget Name
 viewEditor m = Widget Greedy Greedy $ do
     ctx <- getContext
-    let perRow = bytesPerRow (layout m) (ctx^.availWidthL)
-                             (bufferLength m)
+    let perRow = bytesPerRow (layout m) (ctx^.availWidthL) (bufLen m)
     let rowCount = ctx^.availHeightL
     let bytes = BL.unpack
               $ Buf.slice (scrollPos m) (rowCount*perRow) (buffer m)
@@ -513,7 +509,7 @@ viewEditor m = Widget Greedy Greedy $ do
     let selectedCol = mod (cursorPos m) perRow
     let offset = withAttr attrOffset
                $ viewOffset (scrollPos m) perRow selectedRow
-                            (bufferLength m - 1) rowCount
+                            (bufLen m - 1) rowCount
     let focused = map ((==) (cursorFocus m)) [0..]
     let views = map (viewBytes bytes perRow
                                (selectedRow, selectedCol) (mode m))
