@@ -1,4 +1,3 @@
-{-# LANGUAGE RankNTypes #-}
 module VHex.Main (vhex) where
 
 import System.IO (FilePath)
@@ -10,9 +9,9 @@ import Data.Char (chr, ord, toLower)
 import Data.List (elemIndex, intersperse)
 import Data.Maybe (fromMaybe)
 
-import Control.Monad (liftM2)
-import Control.Category ((>>>))
+import Control.Monad (liftM2, (>=>))
 import Control.Monad.IO.Class (liftIO)
+import Control.Category ((>>>))
 import Control.Exception (try, IOException)
 
 import Data.ByteString.Lazy (ByteString)
@@ -68,13 +67,38 @@ cursorVal m = fromMaybe 0 $ Buf.selected (buffer m)
 bvFocused :: Model -> ByteView
 bvFocused m = (layout m) !! cursorFocus m
 
+move :: Int -> Model -> Model
+move n m = m { buffer = Buf.move n (buffer m) }
+
+moveTo :: Int -> Model -> Model
+moveTo i m = m { buffer = Buf.moveTo i (buffer m) }
+
+replace :: Word8 -> Model -> Model
+replace w m = if Buf.null (buffer m)
+    then m
+    else m { buffer = Buf.replace w (buffer m) }
+
+insert :: Word8 -> Model -> Model
+insert w m = m { buffer = Buf.insert w (buffer m) }
+
+remove :: Model -> Model
+remove m = if Buf.null (buffer m)
+    then m
+    else m { buffer = Buf.remove (buffer m) }
+
+-- config
+
 bytesPerRowMultiple :: Int
 bytesPerRowMultiple = 4
 
-enableCursorLine :: Bool
-enableCursorLine = True
+scrollOff :: Int
+scrollOff = 5
+
+cursorLine :: Bool
+cursorLine = True
 
 -- attributes
+
 attrDef :: AttrName
 attrCursorLine :: AttrName
 attrSelected :: AttrName
@@ -197,18 +221,50 @@ scroll n m = viewportSize >>= scroll' where
                             maxPos = floorN perRow (bufferLength m - 1)
                         in BU.clamp 0 maxPos (prev + n*perRow) }
 
-scrollBottom :: Model -> EventM Name Model
-scrollBottom m = viewportSize >>= scrollBottom' where
-    scrollBottom' (w, h) = return $
-        let perRow = bytesPerRow (layout m) w (bufferLength m)
-            maxPos = bufferLength m - 1
-        in m { scrollPos = max 0 $ ceilN perRow (maxPos - perRow*h) }
+scrollHalfPage :: Direction -> Model -> EventM Name Model
+scrollHalfPage dir m = viewportSize >>= scrollHalfPage' where
+    scrollHalfPage' (w, h) =
+        m { scrollPos = let prev = scrollPos m
+                            maxPos = floorN perRow (bufferLength m - 1)
+                        in BU.clamp 0 maxPos (prev + diff)
+          } & moveTo newCursor & return
+        where jump = (div h 2) * perRow
+              diff = case dir of
+                        Up -> -jump
+                        Down -> jump
+              perRow = bytesPerRow (layout m) w (bufferLength m)
+              newCursor = BU.clamp 0 (bufferLength m-1) (cursorPos m+diff)
 
-scrollTop :: Model -> Model
-scrollTop m = m { scrollPos = 0 }
+-- keep cursor in view when scrolling
+keepCursor :: Model -> EventM Name Model
+keepCursor m = viewportSize >>= keepCursor' where
+    keepCursor' (w, h) = let perRow = bytesPerRow (layout m) w
+                                      (bufferLength m)
+                             curRow = div (cursorPos m - scrollPos m) perRow
+                             newRow = BU.clamp scrollOff (h-scrollOff-1) curRow
+                             newPos = (cursorPos m) + ((newRow-curRow)*perRow)
+                         in return $ moveTo newPos m
+
+-- ensure cursor is always visible when scrolling
+followCursor :: Model -> EventM Name Model
+followCursor m = viewportSize >>= followCursor' where
+    followCursor' (w, h) =
+        let perRow = bytesPerRow (layout m) w (bufferLength m)
+            bottomMargin = bufferLength m-1-perRow*(h-1)
+            upperMargin = (cursorPos m) + perRow*(scrollOff+1-h)
+            minPos = BU.clamp 0 upperMargin bottomMargin
+            lowerMargin = (cursorPos m) - perRow*scrollOff
+            newPos = BU.clamp minPos lowerMargin (scrollPos m)
+        in return m { scrollPos = floorN perRow newPos }
+
+goToBottom :: Model -> Model
+goToBottom m = moveTo (bufferLength m - 1) m
+
+goToTop :: Model -> Model
+goToTop = moveTo 0
 
 curHori :: Int -> Model -> Model
-curHori n m = m { buffer = Buf.moveTo newPos (buffer m) }
+curHori n m = moveTo newPos m
     where newPos = BU.clamp 0 (bufferLength m - 1) (cursorPos m + n)
 
 curVert :: Int -> Model -> EventM Name Model
@@ -219,24 +275,21 @@ curVert n m = viewportSize >>= curVert' where
                           finalPos = if 0 <= newPos
                                         then newPos
                                         else cursorPos m
-                      in return
-                        m { buffer = Buf.moveTo finalPos (buffer m) }
+                      in return $ moveTo finalPos m
 
 curBeginning :: Model -> EventM Name Model
 curBeginning m = viewportSize >>= curBeginning' where
     curBeginning' (w, _) = let perRow = bytesPerRow (layout m) w
                                                     (bufferLength m)
                                newPos = floorN perRow (cursorPos m)
-                           in return
-                            m { buffer = Buf.moveTo newPos (buffer m) }
+                           in return $ moveTo newPos m
 
 curEnd :: Model -> EventM Name Model
 curEnd m = viewportSize >>= curEnd' where
     curEnd' (w, _) = let perRow = bytesPerRow (layout m) w (bufferLength m)
                          lineEnd = floorN perRow (cursorPos m) + perRow - 1
                          newPos = min lineEnd (bufferLength m - 1)
-                     in return
-                        m { buffer = Buf.moveTo newPos (buffer m) }
+                     in return $ moveTo newPos m
 
 focusNext :: Model -> Model
 focusNext m = m { cursorFocus = mod (cursorFocus m + 1) (length $ layout m) }
@@ -249,7 +302,8 @@ executeCmd m cmdLine = case head $ getEditContents cmdLine of
     "q" -> halt m
     "w" -> liftIO (saveFile m') >>= continue
     cmd -> continue
-        m { mode = NormalMode $ CmdNone $ Just $ Left ("Invalid command: " ++ cmd) }
+        m { mode = NormalMode
+                 $ CmdNone $ Just $ Left ("Invalid command: " ++ cmd) }
     where
         m' = m { mode = NormalMode $ CmdNone Nothing }
 
@@ -264,30 +318,30 @@ updateExCmd m vtye cmdLine =
 
 normalMode :: Event -> Model -> EventM Name Model
 normalMode vtye = case vtye of
-    EvKey (KChar 'h')  []      -> curHori (-1) >>> return
-    EvKey KLeft        []      -> curHori (-1) >>> return
-    EvKey (KChar 'j')  []      -> curVert 1
-    EvKey KDown        []      -> curVert 1
-    EvKey (KChar 'k')  []      -> curVert (-1)
-    EvKey KUp          []      -> curVert (-1)
-    EvKey (KChar 'l')  []      -> curHori 1 >>> return
-    EvKey KRight       []      -> curHori 1 >>> return
+    EvKey (KChar 'h')  []      -> curHori (-1) >>> followCursor
+    EvKey KLeft        []      -> curHori (-1) >>> followCursor
+    EvKey (KChar 'j')  []      -> curVert 1 >=> followCursor
+    EvKey KDown        []      -> curVert 1 >=> followCursor
+    EvKey (KChar 'k')  []      -> curVert (-1) >=> followCursor
+    EvKey KUp          []      -> curVert (-1) >=> followCursor
+    EvKey (KChar 'l')  []      -> curHori 1 >>> followCursor
+    EvKey KRight       []      -> curHori 1 >>> followCursor
     EvKey (KChar '0')  []      -> curBeginning
     EvKey (KChar '^')  []      -> curBeginning
     EvKey (KChar '$')  []      -> curEnd
     EvKey (KChar '\t') []      -> focusNext >>> return
     EvKey KBackTab     []      -> focusPrev >>> return
-    EvKey (KChar 'y')  [MCtrl] -> scroll (-1)
-    EvKey (KChar 'e')  [MCtrl] -> scroll 1
-    EvKey (KChar 'u')  [MCtrl] -> scroll (-15)
-    EvKey (KChar 'd')  [MCtrl] -> scroll 15
-    EvKey (KChar 'g')  []      -> scrollTop >>> return
-    EvKey (KChar 'G')  []      -> scrollBottom
+    EvKey (KChar 'y')  [MCtrl] -> scroll (-1) >=> keepCursor
+    EvKey (KChar 'e')  [MCtrl] -> scroll 1 >=> keepCursor
+    EvKey (KChar 'u')  [MCtrl] -> scrollHalfPage Up >=> followCursor
+    EvKey (KChar 'd')  [MCtrl] -> scrollHalfPage Down >=> followCursor
+    EvKey (KChar 'g')  []      -> goToTop >>> followCursor
+    EvKey (KChar 'G')  []      -> goToBottom >>> followCursor
     EvKey (KChar 'r')  []      -> enterReplaceMode >>> return
     EvKey (KChar 'i')  []      -> enterInsertMode >>> return
     EvKey (KChar 'a')  []      -> enterInsertModeAppend >>> return
-    EvKey (KChar 'x')  []      -> removeSelection >>> return
-    EvKey (KChar 'X')  []      -> curHori (-1) >>> removeSelection >>> return
+    EvKey (KChar 'x')  []      -> remove >>> return
+    EvKey (KChar 'X')  []      -> curHori (-1) >>> remove >>> return
     EvKey (KChar ':')  []      -> enterCmdLine >>> return
     _ -> return
 
@@ -295,9 +349,7 @@ enterCmdLine :: Model -> Model
 enterCmdLine m = m { mode = NormalMode $ CmdEx (editor CmdLine (Just 1) "") }
 
 enterNormalMode :: Model -> Model
-enterNormalMode m = m { mode = NormalMode $ CmdNone Nothing
-                      , buffer = Buf.moveTo newLoc buf
-                      }
+enterNormalMode m = m { mode = NormalMode $ CmdNone Nothing } & moveTo newLoc
     where buf = buffer m
           newLoc = min (Buf.location buf) (Buf.length buf - 1)
 
@@ -310,20 +362,7 @@ enterInsertMode :: Model -> Model
 enterInsertMode m = m { mode = InputMode InsertMode 0 }
 
 enterInsertModeAppend :: Model -> Model
-enterInsertModeAppend m = m { buffer = Buf.move 1 (buffer m) } & enterInsertMode
-
-replaceSelection :: Word8 -> Model -> Model
-replaceSelection w m = if Buf.null (buffer m)
-    then m
-    else m { buffer = Buf.replace w (buffer m) }
-
-insertSelection :: Word8 -> Model -> Model
-insertSelection w m = m { buffer = Buf.insert w (buffer m) }
-
-removeSelection :: Model -> Model
-removeSelection m = if Buf.null (buffer m)
-    then m
-    else m { buffer = Buf.remove (buffer m) }
+enterInsertModeAppend = move 1 >>> enterInsertMode
 
 setChar :: ByteView -> Word8 -> Char -> Int -> Maybe Word8
 setChar bv w c i = toWord bv modified
@@ -333,7 +372,7 @@ setChar bv w c i = toWord bv modified
 replaceChar :: Char -> Int -> InsMode -> Model -> Model
 replaceChar c i im m = case setChar bv selected c i of
     Nothing -> m
-    Just w -> replaceSelection w m & inputCurHori im i 1
+    Just w -> replace w m & inputCurHori im i 1
     where bv = bvFocused m
           selected = cursorVal m
 
@@ -341,16 +380,14 @@ insertChar :: Char -> Int -> InsMode -> Model -> Model
 insertChar c i im m
     | i == 0 = case setChar (bvFocused m) 0 c i of
         Nothing -> m
-        Just w -> insertSelection w m & inputCurHori im i 1
+        Just w -> insert w m & inputCurHori im i 1
     | otherwise = replaceChar c i InsertMode m
 
 inputCurHori :: InsMode -> Int -> Int -> Model -> Model
 inputCurHori im i d m
     | i+d < 0   = m { mode = InputMode im (dw-1) } & curHori (-1)
     | i+d >= dw = let newPos = min (cursorPos m + 1) (bufferLength m)
-                  in m { mode = InputMode im 0
-                       , buffer = Buf.moveTo newPos (buffer m)
-                       }
+                  in m { mode = InputMode im 0 } & moveTo newPos
     | otherwise = m { mode = InputMode im (i+d) }
     where dw = displayWidth (bvFocused m)
 
@@ -409,12 +446,6 @@ toHex n d = hexChars !! shifted : toHex (n-1) masked
 floorN :: Int -> Int -> Int
 floorN n x = x - mod x n
 
--- round up to closest multiple of n
-ceilN :: Int -> Int -> Int
-ceilN n x
-    | mod x n == 0 = x
-    | otherwise    = floorN n x + n
-
 -- fill xs with p until length is n
 padOut :: Int -> a -> [a] -> [a]
 padOut n p xs
@@ -430,7 +461,7 @@ groupsOf n xs = let (y,ys) = splitAt n xs
 
 viewOffset :: Int -> Int -> Int -> Int -> Int -> Widget Name
 viewOffset start step selected maxAddr rowCount = vBox rows where
-    styleRow r = if enableCursorLine && r == selected
+    styleRow r = if cursorLine && r == selected
                     then attrOffsetCursorLine
                     else attrOffset
     display offset = if offset <= maxAddr
@@ -452,7 +483,7 @@ viewBytes bytes perRow
             NormalMode _ -> withAttr attrSelectedFocused col
             InputMode _ i -> showCursor Cursor (Location (i, 0)) col
     styleRow r row =
-        let attr = if enableCursorLine && r == selectedRow
+        let attr = if cursorLine && r == selectedRow
                     then attrCursorLine
                     else attrDef
         in withAttr attr row
