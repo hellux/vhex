@@ -265,11 +265,11 @@ followCursor m = viewportSize >>= followCursor' where
             newPos = BU.clamp minPos lowerMargin (scrollPos m)
         in return m { scrollPos = floorN perRow newPos }
 
-goToBottom :: Model -> Model
-goToBottom m = moveTo (bufLen m - 1) m
+goToBottom :: Model -> EventM Name Model
+goToBottom m = moveTo (bufLen m - 1) m & followCursor
 
-goToTop :: Model -> Model
-goToTop = moveTo 0
+goToTop :: Model -> EventM Name Model
+goToTop = moveTo 0 >>> followCursor
 
 curHori :: Int -> Model -> EventM Name Model
 curHori n m = m & moveTo newPos & followCursor
@@ -342,11 +342,14 @@ normalMode vtye = case vtye of
     EvKey (KChar 'e')  [MCtrl] -> scroll 1
     EvKey (KChar 'u')  [MCtrl] -> scrollHalfPage Up
     EvKey (KChar 'd')  [MCtrl] -> scrollHalfPage Down
-    EvKey (KChar 'g')  []      -> goToTop >>> followCursor
-    EvKey (KChar 'G')  []      -> goToBottom >>> followCursor
-    EvKey (KChar 'r')  []      -> enterReplaceMode >>> return
+    EvKey (KChar 'g')  []      -> goToTop
+    EvKey (KChar 'G')  []      -> goToBottom
+    EvKey (KChar 'R')  []      -> enterReplaceMode >>> return
     EvKey (KChar 'i')  []      -> enterInsertMode >>> return
-    EvKey (KChar 'a')  []      -> enterInsertModeAppend >>> return
+    EvKey (KChar 'I')  []      -> goToTop >=> enterInsertMode >>> return
+    EvKey (KChar 'a')  []      -> move 1 >>> enterInsertMode >>> return
+    EvKey (KChar 'A')  []      -> goToBottom >=>
+                                    move 1 >>> enterInsertMode >>> return
     EvKey (KChar 'x')  []      -> remove >>> return
     EvKey (KChar 'X')  []      -> curHori (-1) >=> remove >>> return
     EvKey (KChar ':')  []      -> enterCmdLine >>> return
@@ -367,9 +370,6 @@ enterReplaceMode m
 
 enterInsertMode :: Model -> Model
 enterInsertMode m = m { mode = InputMode InsertMode 0 }
-
-enterInsertModeAppend :: Model -> Model
-enterInsertModeAppend = move 1 >>> enterInsertMode
 
 setChar :: ByteView -> Word8 -> Char -> Int -> Maybe Word8
 setChar bv w c i = toWord bv modified
