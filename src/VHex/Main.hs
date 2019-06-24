@@ -97,6 +97,11 @@ remove m = if Buf.null (buffer m)
     then m
     else m { buffer = Buf.remove (buffer m) }
 
+removePrev :: Model -> EventM Name Model
+removePrev m = if cursorPos m == 0
+                then m & return
+                else m & curHori Up >>= (remove >>> followCursor)
+
 -- config
 
 bytesPerRowMultiple :: Int
@@ -358,7 +363,7 @@ normalMode vtye = case vtye of
     EvKey (KChar 'A')  []      -> goToBottom >=>
                                     move 1 >>> enterInsertMode >>> return
     EvKey (KChar 'x')  []      -> remove >>> return
-    EvKey (KChar 'X')  []      -> curHori Up >=> remove >>> return
+    EvKey (KChar 'X')  []      -> removePrev
     EvKey (KChar ':')  []      -> enterCmdLine >>> return
     _ -> return
 
@@ -424,6 +429,7 @@ replaceMode ic vtye = case vtye of
 insertMode :: Int -> Event -> Model -> EventM Name Model
 insertMode ic vtye = case vtye of
     EvKey (KChar c) [] -> insertChar c ic InsertMode
+    EvKey KBS       [] -> removePrev -- TODO handle individual chars
     _ -> inputMode InsertMode ic vtye
 
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
