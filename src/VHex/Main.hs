@@ -405,8 +405,10 @@ inputCurHori :: InsMode -> Int -> Direction -> Model -> EventM Name Model
 inputCurHori im i dir m
     | dir == Up && i == 0 =
         m { mode = InputMode im (dw-1) } & curHori Up
-    | dir == Down && i == dw-1 =
+    | dir == Down && i == dw-1 && (cursorPos m) < (bufLen m) =
         m { mode = InputMode im 0 } & move 1 & followCursor
+    | dir == Down && i == dw-1 && (cursorPos m) == (bufLen m) =
+        m & return
     | otherwise =
         m { mode = InputMode im (fromDir dir + i) } & return
     where dw = displayWidth (bvFocused m)
