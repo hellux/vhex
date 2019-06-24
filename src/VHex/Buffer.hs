@@ -107,6 +107,7 @@ insert w buf = case selected buf of
 replace :: Word8 -> Buffer -> Buffer
 replace w buf
     | null buf = error "empty buffer"
+    | selected buf == Nothing = insert w buf
     | otherwise = buf { selected = Just w }
 
 remove :: Buffer -> Buffer
