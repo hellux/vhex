@@ -5,8 +5,8 @@ import System.Environment (getArgs)
 
 import Data.Bits ((.&.), shiftR, shiftL)
 import Data.Word (Word8)
-import Data.Char (chr, ord, toLower)
-import Data.List (elemIndex, intersperse)
+import Data.Char (chr, ord, toLower, isSpace)
+import Data.List (elemIndex, intersperse, dropWhileEnd)
 import Data.Maybe (fromMaybe)
 
 import Control.Monad (liftM2, (>=>))
@@ -33,10 +33,10 @@ import VHex.Buffer (Buffer)
 import qualified VHex.Buffer as Buf
 
 data Name = EditorViewPort
-                  | CmdLine
-                  | EditorBuffer
-                  | Cursor
-                  deriving (Show, Eq, Ord)
+          | CmdLine
+          | EditorBuffer
+          | Cursor
+          deriving (Show, Eq, Ord)
 
 data CmdLineMode = CmdNone
                     (Maybe
@@ -46,13 +46,13 @@ data CmdLineMode = CmdNone
                  | CmdEx (Editor String Name)
                  deriving (Show)
 
+data Input = Input
+                String  -- fixed length string representation of byte
+                Int     -- cursor position on selected byte
 data InsMode = ReplaceMode | InsertMode
 
-data Mode = NormalMode
-                CmdLineMode
-          | InputMode
-                InsMode
-                Int     -- cursor position on selected byte
+data Mode = NormalMode CmdLineMode
+          | InputMode InsMode Input
 
 data Model = Model
     { filePath :: FilePath
@@ -70,8 +70,8 @@ bufLen = Buf.length . buffer
 cursorPos :: Model -> Int
 cursorPos m = Buf.location (buffer m)
 
-cursorVal :: Model -> Word8
-cursorVal m = fromMaybe 0 $ Buf.selected (buffer m)
+cursorVal :: Model -> Maybe Word8
+cursorVal m = Buf.selected (buffer m)
 
 bvFocused :: Model -> ByteView
 bvFocused m = layout m !! cursorFocus m
@@ -115,19 +115,23 @@ cursorLine = True
 
 -- attributes
 
+attrCurrent :: AttrName
 attrDef :: AttrName
 attrCursorLine :: AttrName
 attrSelected :: AttrName
 attrSelectedFocused :: AttrName
+attrInvalid :: AttrName
 attrOffset :: AttrName
 attrOffsetCursorLine :: AttrName
 attrError :: AttrName
 attrStatusBar :: AttrName
 attrMode :: AttrName
+attrCurrent = attrName "current"
 attrDef = attrName "def"
 attrCursorLine = attrName "cursorLine"
 attrSelected = attrName "selected"
 attrSelectedFocused = attrName "selectedFocused"
+attrInvalid = attrName "invalid"
 attrOffset = attrName "offset"
 attrOffsetCursorLine = attrName "offsetCursorLine"
 attrStatusBar = attrName "statusbar"
@@ -136,10 +140,12 @@ attrError = attrName "error"
 
 attributes :: AttrMap
 attributes = attrMap mempty
-    [ (attrDef, BU.fg fg)
+    [ (attrCurrent, VTY.currentAttr)
+    , (attrDef, BU.fg fg)
     , (attrCursorLine, BU.bg grey23)
     , (attrSelected, BU.bg grey23 `VTY.withStyle` VTY.underline)
     , (attrSelectedFocused, bg `BU.on` fg)
+    , (attrInvalid, red `BU.on` grey23)
     , (attrOffset, BU.fg grey)
     , (attrOffsetCursorLine, yellow `BU.on` grey23)
     , (attrStatusBar, BU.bg grey30)
@@ -156,9 +162,15 @@ attributes = attrMap mempty
 
 data ByteView = ByteView {
     fromWord :: Word8 -> String,
-    toWord :: String -> Maybe Word8,
+    _toWord :: String -> Maybe Word8,
     spaceWidth :: Int
 }
+
+trim :: String -> String
+trim = dropWhileEnd isSpace . dropWhile isSpace
+
+toWord :: ByteView -> String -> Maybe Word8
+toWord bv = _toWord bv . trim
 
 displayWidth :: ByteView -> Int
 displayWidth bv = textWidth $ fromWord bv 0
@@ -166,7 +178,7 @@ displayWidth bv = textWidth $ fromWord bv 0
 hex :: ByteView
 hex = ByteView
     { fromWord = toHex 2 . fromIntegral
-    , toWord = fmap fromIntegral . fromHex
+    , _toWord = fmap fromIntegral . fromHex
     , spaceWidth = 1
     }
 
@@ -175,7 +187,7 @@ ascii1 = ByteView
     { fromWord = \w -> if w < 32 || w > 126
                         then "."
                         else [chr $ fromIntegral w]
-    , toWord = \w -> if null w
+    , _toWord = \w -> if null w
                         then Just 0
                         else (Just . fromIntegral . ord . head) w
     , spaceWidth = 0
@@ -210,17 +222,13 @@ openFile path m = do
 saveFile:: Model -> IO Model
 saveFile m = do
     let contents = Buf.contents (buffer m)
-    let path = filePath m
+        path = filePath m
     res <- try $ BL.writeFile path contents :: IO (Either IOException ())
     case res of
-        Left err -> return
-            m { mode = NormalMode
-                     $ CmdNone $ Just $ Left (show err) }
-        Right _ -> return
-            m { fileContents = contents
-              , mode = NormalMode
-                     $ CmdNone $ Just $ Right $ show path ++ " written"
-              }
+        Left err -> m & errorMsg (show err) & return
+        Right _ -> m { fileContents = contents }
+                    & infoMsg (show path ++ " written")
+                    & return
 
 viewportSize :: EventM Name (Int, Int)
 viewportSize = do
@@ -315,28 +323,32 @@ focusNext m = m { cursorFocus = mod (cursorFocus m + 1) (length $ layout m) }
 focusPrev :: Model -> Model
 focusPrev m = m { cursorFocus = mod (cursorFocus m - 1) (length $ layout m) }
 
-executeCmd :: Model -> Editor String Name -> EventM Name (Next Model)
-executeCmd m cmdLine = case head $ getEditContents cmdLine of
-    "q" -> halt m
-    "w" -> liftIO (saveFile m') >>= continue
-    cmd -> continue
-        m { mode = NormalMode
-                 $ CmdNone $ Just $ Left ("Invalid command: " ++ cmd) }
-    where
-        m' = m { mode = NormalMode $ CmdNone Nothing }
+errorMsg :: String -> Model -> Model
+errorMsg msg m = m { mode = NormalMode $ CmdNone $ Just $ Left msg }
+
+infoMsg :: String -> Model -> Model
+infoMsg msg m = m { mode = NormalMode $ CmdNone $ Just $ Right msg }
+
+executeCmd :: String -> Model -> EventM Name (Next Model)
+executeCmd "write" m = liftIO (saveFile m') >>= continue
+    where m' = m { mode = NormalMode $ CmdNone Nothing }
+executeCmd "quit" m = halt m
+executeCmd "w" m = m & executeCmd "w"
+executeCmd "q" m = executeCmd "quit" m
+executeCmd cmd m = m & errorMsg ("Invalid command: " ++ cmd) & continue
 
 updateExCmd :: Model -> Event -> Editor String Name -> EventM Name (Next Model)
 updateExCmd m vtye cmdLine =
     case vtye of
         EvKey KEsc   [] -> continue $ m { mode = NormalMode $ CmdNone Nothing }
-        EvKey KEnter [] -> executeCmd m cmdLine
+        EvKey KEnter [] -> executeCmd (head $ getEditContents cmdLine) m
         _ -> do
             cmdLine' <- handleEditorEvent vtye cmdLine
             continue m { mode = NormalMode $ CmdEx cmdLine' }
 
 normalMode :: Event -> Model -> EventM Name Model
 normalMode vtye = case vtye of
-    EvKey (KChar 'h')  []      -> curHori Down
+    EvKey (KChar 'h')  []      -> curHori Up
     EvKey KLeft        []      -> curHori Up
     EvKey (KChar 'j')  []      -> curVert Down
     EvKey KDown        []      -> curVert Down
@@ -369,78 +381,100 @@ normalMode vtye = case vtye of
 enterCmdLine :: Model -> Model
 enterCmdLine m = m { mode = NormalMode $ CmdEx (editor CmdLine (Just 1) "") }
 
-enterNormalMode :: Model -> Model
-enterNormalMode m = m { mode = NormalMode $ CmdNone Nothing } & moveTo newLoc
-    where buf = buffer m
-          newLoc = min (Buf.location buf) (Buf.length buf - 1)
+exitInputMode :: Input -> Model -> Model
+exitInputMode (Input ip _) m = m { mode = NormalMode $ CmdNone Nothing }
+                                & replace newByte
+    where current = fromMaybe 0 (cursorVal m)
+          newByte = fromMaybe current $ toWord (bvFocused m) ip
 
 enterReplaceMode :: Model -> Model
 enterReplaceMode m
     | Buf.null (buffer m) = m
-    | otherwise = m { mode = InputMode ReplaceMode 0 }
+    | otherwise = m { mode = InputMode ReplaceMode (Input "" 0) } & updateInput
 
 enterInsertMode :: Model -> Model
-enterInsertMode m = m { mode = InputMode InsertMode 0 }
+enterInsertMode m =
+    m { mode = InputMode InsertMode (Input "" 0) } & updateInput
 
-setChar :: ByteView -> Word8 -> Char -> Int -> Maybe Word8
-setChar bv w c i = toWord bv modified
-    where current = fromWord bv w
-          modified = current & ix i .~ c
+replaceChar :: Char -> Input -> Model -> EventM Name Model
+replaceChar c (Input ip i) m = m & inputCurHori ReplaceMode newInput Down
+    where newInput = Input (ip & ix i .~ c) i
 
-replaceChar :: Char -> Int -> InsMode -> Model -> EventM Name Model
-replaceChar c i im m = case setChar bv selected c i of
-    Nothing -> m & return
-    Just w -> m & replace w & inputCurHori im i Down
-    where bv = bvFocused m
-          selected = cursorVal m
+insertChar :: Char -> Input -> Model -> EventM Name Model
+insertChar c (Input ip i) m
+    | i == 0 = m { mode = InputMode InsertMode (Input [c] 1) }
+            & insert 0
+            & return
+    | otherwise = if length newIp > dw
+        then m & return
+        else m & inputCurHori InsertMode (Input newIp i) Down
+    where newIp = take i ip ++ [c] ++ drop i ip
+          dw = displayWidth (bvFocused m) 
 
-insertChar :: Char -> Int -> InsMode -> Model -> EventM Name Model
-insertChar c i im m
-    | i == 0 = case setChar (bvFocused m) 0 c i of
-        Nothing -> m & return
-        Just w -> insert w m & inputCurHori im i Down
-    | otherwise = replaceChar c i InsertMode m
+updateInput :: Model -> Model
+updateInput m = case mode m of
+    NormalMode _ -> m
+    InputMode im (Input _ i) -> m { mode = InputMode im (Input newIp i) }
+    where newIp = case cursorVal m of
+                    Nothing -> ""
+                    Just w -> fromWord (bvFocused m) w
 
-inputCurHori :: InsMode -> Int -> Direction -> Model -> EventM Name Model
-inputCurHori im i dir m
-    | dir == Up && i == 0 =
-        m { mode = InputMode im (dw-1) } & curHori Up
-    | dir == Down && i == dw-1 && (cursorPos m) < (bufLen m) =
-        m { mode = InputMode im 0 } & move 1 & followCursor
-    | dir == Down && i == dw-1 && (cursorPos m) == (bufLen m) =
-        m & return
+inputCurHori :: InsMode -> Input -> Direction -> Model -> EventM Name Model
+inputCurHori im input@(Input ip i) dir m
+    | dir == Up && i == 0 && cursorPos m == 0 = m & return
+    | dir == Up && i == 0 = case newByte of
+        Nothing -> m { mode = InputMode im input } & return
+        Just w -> m { mode = InputMode im (Input ip (dw-1)) }
+            & replace w
+            & curHori Up
+            >>= (updateInput >>> return)
+    | dir == Down && i == dw-1 = case newByte of
+        Nothing -> m { mode = InputMode im input } & return
+        Just w -> m { mode = InputMode im (Input ip 0) }
+            & replace w
+            & move 1 & followCursor
+            >>= (updateInput >>> return)
     | otherwise =
-        m { mode = InputMode im (fromDir dir + i) } & return
-    where dw = displayWidth (bvFocused m)
+        m { mode = InputMode im (Input ip (fromDir dir + i)) } & return
+    where bv = bvFocused m
+          dw = displayWidth bv
+          newByte = toWord bv ip
 
-inputMode :: InsMode -> Int -> Event -> Model -> EventM Name Model
-inputMode im inputCursor vtye = case vtye of
-    EvKey KLeft     [] -> inputCurHori im inputCursor Up
-    EvKey KDown     [] -> curVert Down
-    EvKey KUp       [] -> curVert Up
-    EvKey KRight    [] -> inputCurHori im inputCursor Down
-    EvKey KEsc      [] -> enterNormalMode >>> return
+inputCurVert :: Input -> Direction -> Model -> EventM Name Model
+inputCurVert (Input ip _) dir m = case newByte of
+    Nothing -> m & return
+    Just w -> m & replace w & curVert dir >>= (updateInput >>> return)
+    where bv = bvFocused m
+          newByte = toWord bv ip
+
+inputMode :: InsMode -> Input -> Event -> Model -> EventM Name Model
+inputMode im input vtye = case vtye of
+    EvKey KLeft     [] -> inputCurHori im input Up
+    EvKey KDown     [] -> inputCurVert input Down
+    EvKey KUp       [] -> inputCurVert input Up
+    EvKey KRight    [] -> inputCurHori im input Down
+    EvKey KEsc      [] -> exitInputMode input >>> return
     _ -> return
 
-replaceMode :: Int -> Event -> Model -> EventM Name Model
-replaceMode ic vtye = case vtye of
-    EvKey (KChar c) [] -> replaceChar c ic ReplaceMode
-    _ -> inputMode ReplaceMode ic vtye
+replaceMode :: Input -> Event -> Model -> EventM Name Model
+replaceMode input vtye = case vtye of
+    EvKey (KChar c) [] -> replaceChar c input 
+    _ -> inputMode ReplaceMode input vtye
 
-insertMode :: Int -> Event -> Model -> EventM Name Model
-insertMode ic vtye = case vtye of
-    EvKey (KChar c) [] -> insertChar c ic InsertMode
+insertMode :: Input -> Event -> Model -> EventM Name Model
+insertMode input vtye = case vtye of
+    EvKey (KChar c) [] -> insertChar c input
     EvKey KBS       [] -> removePrev -- TODO handle individual chars
-    _ -> inputMode InsertMode ic vtye
+    _ -> inputMode InsertMode input vtye
 
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
 update m (VtyEvent vtye) = case mode m of
     NormalMode cm -> case cm of
         CmdEx cmdLine -> updateExCmd m vtye cmdLine
         CmdNone _ -> normalMode vtye m >>= continue
-    InputMode im i -> case im of
-        ReplaceMode -> replaceMode i vtye m >>= continue
-        InsertMode -> insertMode i vtye m >>= continue
+    InputMode im input -> case im of
+        ReplaceMode -> replaceMode input vtye m >>= continue
+        InsertMode -> insertMode input vtye m >>= continue
 update m _ = continue m
 
 -- character length of hex representation of number
@@ -452,10 +486,10 @@ hexChars = "0123456789abcdef"
 
 fromHex :: String -> Maybe Int
 fromHex [] = Just 0
-fromHex (h:ex) = ((*) size <$> digit) >+< fromHex ex
-    where (>+<) = liftM2 (+)
-          digit = elemIndex (toLower h) hexChars
-          size = product $ replicate (length ex) 16
+fromHex (h:ex) = fmap (*size) digit >+< fromHex ex
+    where (>+<) = liftM2 (+) :: Maybe Int -> Maybe Int -> Maybe Int
+          digit = elemIndex (toLower h) hexChars :: Maybe Int
+          size = 16^length ex
 
 toHex :: Int -> Int -> String
 toHex 0 _ = ""
@@ -503,7 +537,14 @@ viewBytes bytes perRow
         | not focused = withAttr attrSelected col
         | otherwise = case mode_ of
             NormalMode _ -> withAttr attrSelectedFocused col
-            InputMode _ i -> showCursor Cursor (Location (i, 0)) col
+            InputMode _ (Input ip i) ->
+                let attr = case toWord bv ip of
+                            Nothing -> attrInvalid
+                            Just _ -> attrCurrent
+                in withAttr attr
+                    $ showCursor Cursor (Location (i, 0))
+                    $ str
+                    $ padOut (displayWidth bv) ' ' ip
     styleRow r row =
         let attr = if cursorLine && r == selectedRow
                     then attrCursorLine
@@ -548,17 +589,16 @@ viewStatusBar :: Model -> Widget Name
 viewStatusBar m = withAttr attrStatusBar $ str $
     filePath m ++ ": "
     ++ show (cursorPos m) ++ ", "
-    ++ show (cursorVal m) ++ ", "
     ++ show (scrollPos m) ++ "  "
 
 viewCmdLine :: Model -> Widget Name
 viewCmdLine m = case mode m of
     NormalMode cm -> case cm of
         CmdNone Nothing -> str " "
-        CmdNone (Just (Left errorMsg)) ->
-            withAttr attrError (str errorMsg) <+> withAttr attrDef (str " ")
-        CmdNone (Just (Right infoMsg)) ->
-            withAttr attrDef (str infoMsg)
+        CmdNone (Just (Left err)) ->
+            withAttr attrError (str err) <+> withAttr attrDef (str " ")
+        CmdNone (Just (Right info)) ->
+            withAttr attrDef (str info)
         CmdEx cmdLine -> str ":" <+> renderEditor (str . head) True cmdLine
     InputMode im _ -> case im of
         ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
