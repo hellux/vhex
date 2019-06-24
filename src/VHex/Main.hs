@@ -74,7 +74,7 @@ cursorVal :: Model -> Word8
 cursorVal m = fromMaybe 0 $ Buf.selected (buffer m)
 
 bvFocused :: Model -> ByteView
-bvFocused m = (layout m) !! cursorFocus m
+bvFocused m = layout m !! cursorFocus m
 
 move :: Int -> Model -> Model
 move n m = if cursorPos m < bufLen m
@@ -230,9 +230,8 @@ viewportSize = do
         Just (Extent _ _ dims _) -> return dims
 
 fromDir :: Direction -> Int
-fromDir dir = case dir of
-                Up -> -1
-                Down -> 1
+fromDir Up = -1
+fromDir Down = 1
 
 scroll :: Direction -> Model -> EventM Name Model
 scroll dir m = viewportSize >>= scroll' >>= keepCursor where
@@ -240,7 +239,7 @@ scroll dir m = viewportSize >>= scroll' >>= keepCursor where
         m { scrollPos = let perRow = bytesPerRow (layout m) w (bufLen m)
                             prev = scrollPos m
                             maxPos = floorN perRow (bufLen m - 1)
-                        in BU.clamp 0 maxPos (prev + (fromDir dir)*perRow) }
+                        in BU.clamp 0 maxPos (prev + fromDir dir*perRow) }
 
 scrollHalfPage :: Direction -> Model -> EventM Name Model
 scrollHalfPage dir m = viewportSize >>= scrollHalfPage' >>= followCursor where
@@ -249,7 +248,7 @@ scrollHalfPage dir m = viewportSize >>= scrollHalfPage' >>= followCursor where
                             maxPos = floorN perRow (bufLen m - 1)
                         in BU.clamp 0 maxPos (prev + diff)
           } & moveTo newCursor & return
-        where jump = (div h 2) * perRow
+        where jump = div h 2 * perRow
               diff = fromDir dir * jump
               perRow = bytesPerRow (layout m) w (bufLen m)
               newCursor = BU.clamp 0 (bufLen m-1) (cursorPos m+diff)
@@ -260,7 +259,7 @@ keepCursor m = viewportSize >>= keepCursor' where
     keepCursor' (w, h) = let perRow = bytesPerRow (layout m) w (bufLen m)
                              curRow = div (cursorPos m - scrollPos m) perRow
                              newRow = BU.clamp scrollOff (h-scrollOff-1) curRow
-                             newPos = (cursorPos m) + ((newRow-curRow)*perRow)
+                             newPos = cursorPos m + ((newRow-curRow)*perRow)
                          in return $ moveTo newPos m
 
 -- ensure cursor is always visible when scrolling
@@ -269,9 +268,9 @@ followCursor m = viewportSize >>= followCursor' where
     followCursor' (w, h) =
         let perRow = bytesPerRow (layout m) w (bufLen m)
             bottomMargin = bufLen m-1-perRow*(h-1)
-            upperMargin = (cursorPos m) + perRow*(scrollOff+1-h)
+            upperMargin = cursorPos m + perRow*(scrollOff+1-h)
             minPos = BU.clamp 0 upperMargin bottomMargin
-            lowerMargin = (cursorPos m) - perRow*scrollOff
+            lowerMargin = cursorPos m - perRow*scrollOff
             newPos = BU.clamp minPos lowerMargin (scrollPos m)
         in return m { scrollPos = floorN perRow newPos }
 
@@ -433,15 +432,14 @@ insertMode ic vtye = case vtye of
     _ -> inputMode InsertMode ic vtye
 
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
-update m e = case e of
-    VtyEvent vtye -> case mode m of
-        NormalMode cm -> case cm of
-            CmdEx cmdLine -> updateExCmd m vtye cmdLine
-            CmdNone _ -> normalMode vtye m >>= continue
-        InputMode im i -> case im of
-            ReplaceMode -> replaceMode i vtye m >>= continue
-            InsertMode -> insertMode i vtye m >>= continue
-    _ -> continue m
+update m (VtyEvent vtye) = case mode m of
+    NormalMode cm -> case cm of
+        CmdEx cmdLine -> updateExCmd m vtye cmdLine
+        CmdNone _ -> normalMode vtye m >>= continue
+    InputMode im i -> case im of
+        ReplaceMode -> replaceMode i vtye m >>= continue
+        InsertMode -> insertMode i vtye m >>= continue
+update m _ = continue m
 
 -- character length of hex representation of number
 hexLength :: Int -> Int
@@ -479,7 +477,7 @@ padOut n p xs
 groupsOf :: Int -> [a] -> [[a]]
 groupsOf _ [] = []
 groupsOf n xs = let (y,ys) = splitAt n xs
-               in y : groupsOf n ys
+                in y : groupsOf n ys
 
 viewOffset :: Int -> Int -> Int -> Int -> Int -> Widget Name
 viewOffset start step selected maxAddr rowCount = vBox rows where
@@ -535,7 +533,7 @@ viewEditor m = Widget Greedy Greedy $ do
     let offset = withAttr attrOffset
                $ viewOffset (scrollPos m) perRow selectedRow
                             (bufLen m - 1) rowCount
-    let focused = map ((==) (cursorFocus m)) [0..]
+    let focused = map (cursorFocus m ==) [0..]
     let views = map (viewBytes bytes perRow
                                (selectedRow, selectedCol) (mode m))
                     (zip focused $ layout m)
