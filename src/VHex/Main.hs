@@ -268,7 +268,8 @@ keepCursor m = viewportSize >>= keepCursor' where
                              curRow = div (cursorPos m - scrollPos m) perRow
                              newRow = BU.clamp scrollOff (h-scrollOff-1) curRow
                              newPos = cursorPos m + ((newRow-curRow)*perRow)
-                         in return $ moveTo newPos m
+                             finalPos = min (bufLen m-1) newPos
+                         in return $ moveTo finalPos m
 
 -- ensure cursor is always visible when scrolling
 followCursor :: Model -> EventM Name Model
