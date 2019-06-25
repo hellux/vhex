@@ -386,15 +386,13 @@ normalMode vtye = case vtye of
 enterCmdLine :: Model -> Model
 enterCmdLine m = m { mode = NormalMode $ CmdEx (editor CmdLine (Just 1) "") }
 
-exitInputMode :: Input -> Bool -> Model -> Model
+exitInputMode :: Input -> Bool -> Model -> EventM Name Model
 exitInputMode (Input ip _) nb m = m { mode = NormalMode $ CmdNone Nothing }
-                                    & (if nb
-                                        then id
-                                        else replace newByte)
-                                    & moveTo newPos
+                                    & if nb
+                                        then curHori Up
+                                        else replace newByte >>> return
     where current = fromMaybe 0 (cursorVal m)
           newByte = fromMaybe current $ toWord (bvFocused m) ip
-          newPos = min (bufLen m-1) (cursorPos m) :: Int
 
 enterReplaceMode :: Model -> Model
 enterReplaceMode m
@@ -444,7 +442,7 @@ inputCurHori im input@(Input ip i) dir m
                     & replace w
                     & case im of
                         ReplaceMode -> curHori Down
-                        InsertMode -> (move 1 >>> return)
+                        InsertMode -> move 1 >>> return
                     >>= (updateInput >>> followCursor)
     | otherwise =
         m { mode = InputMode im (Input ip (fromDir dir + i)) False } & return
@@ -465,7 +463,7 @@ inputMode im input nb vtye = case vtye of
     EvKey KDown     [] -> inputCurVert input Down
     EvKey KUp       [] -> inputCurVert input Up
     EvKey KRight    [] -> inputCurHori im input Down
-    EvKey KEsc      [] -> exitInputMode input nb >>> return
+    EvKey KEsc      [] -> exitInputMode input nb
     _ -> return
 
 replaceMode :: Input -> Bool -> Event -> Model -> EventM Name Model
