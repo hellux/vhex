@@ -403,9 +403,8 @@ replaceChar c (Input ip i) m = m & inputCurHori ReplaceMode newInput Down
 
 insertChar :: Char -> Input -> Model -> EventM Name Model
 insertChar c (Input ip i) m
-    | i == 0 = m { mode = InputMode InsertMode (Input [c] 1) }
-            & insert 0
-            & return
+    | i == 0 = m & inputCurHori InsertMode (Input [c] i) Down
+            >>= (insert 0 >>> return)
     | otherwise = if length newIp > dw
         then m & return
         else m & inputCurHori InsertMode (Input newIp i) Down
