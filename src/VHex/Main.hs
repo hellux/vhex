@@ -49,10 +49,14 @@ data CmdLineMode = CmdNone
 data Input = Input
                 String  -- string representation of byte
                 Int     -- cursor position on selected byte
-data InsMode = ReplaceMode | InsertMode
+data InsMode = ReplaceMode
+             | InsertMode
 
 data Mode = NormalMode CmdLineMode
-          | InputMode InsMode Input
+          | InputMode
+                InsMode
+                Input
+                Bool -- entered new byte
 
 data Model = Model
     { filePath :: FilePath
@@ -382,28 +386,34 @@ normalMode vtye = case vtye of
 enterCmdLine :: Model -> Model
 enterCmdLine m = m { mode = NormalMode $ CmdEx (editor CmdLine (Just 1) "") }
 
-exitInputMode :: Input -> Model -> Model
-exitInputMode (Input ip _) m = m { mode = NormalMode $ CmdNone Nothing }
-                                & replace newByte
+exitInputMode :: Input -> Bool -> Model -> Model
+exitInputMode (Input ip _) nb m = m { mode = NormalMode $ CmdNone Nothing }
+                                    & (if nb
+                                        then id
+                                        else replace newByte)
+                                    & moveTo newPos
     where current = fromMaybe 0 (cursorVal m)
           newByte = fromMaybe current $ toWord (bvFocused m) ip
+          newPos = min (bufLen m-1) (cursorPos m) :: Int
 
 enterReplaceMode :: Model -> Model
 enterReplaceMode m
     | Buf.null (buffer m) = m
-    | otherwise = m { mode = InputMode ReplaceMode (Input "" 0) } & updateInput
+    | otherwise = m { mode = InputMode ReplaceMode (Input "" 0) True }
+                    & updateInput
 
 enterInsertMode :: Model -> Model
 enterInsertMode m =
-    m { mode = InputMode InsertMode (Input "" 0) } & updateInput
+    m { mode = InputMode InsertMode (Input "" 0) True }
+                & updateInput
 
 replaceChar :: Char -> Input -> Model -> EventM Name Model
 replaceChar c (Input ip i) m = m & inputCurHori ReplaceMode newInput Down
     where newInput = Input (ip & ix i .~ c) i
 
-insertChar :: Char -> Input -> Model -> EventM Name Model
-insertChar c (Input ip i) m
-    | i == 0 = m & inputCurHori InsertMode (Input [c] i) Down
+insertChar :: Bool -> Char -> Input -> Model -> EventM Name Model
+insertChar isNew c (Input ip i) m
+    | isNew = m & inputCurHori InsertMode (Input [c] i) Down
             >>= (insert 0 >>> return)
     | otherwise = if length newIp > dw
         then m & return
@@ -414,7 +424,7 @@ insertChar c (Input ip i) m
 updateInput :: Model -> Model
 updateInput m = case mode m of
     NormalMode _ -> m
-    InputMode im (Input _ i) -> m { mode = InputMode im (Input newIp i) }
+    InputMode im (Input _ i) nb -> m { mode = InputMode im (Input newIp i) nb }
     where newIp = case cursorVal m of
                     Nothing -> ""
                     Just w -> fromWord (bvFocused m) w
@@ -423,21 +433,21 @@ inputCurHori :: InsMode -> Input -> Direction -> Model -> EventM Name Model
 inputCurHori im input@(Input ip i) dir m
     | dir == Up && i == 0 && cursorPos m == 0 = m & return
     | dir == Up && i == 0 = case newByte of
-        Nothing -> m { mode = InputMode im input } & return
-        Just w -> m { mode = InputMode im (Input ip (dw-1)) }
+        Nothing -> m { mode = InputMode im input False } & return
+        Just w -> m { mode = InputMode im (Input ip (dw-1)) True }
                     & replace w
                     & curHori Up
                     >>= (updateInput >>> return)
     | dir == Down && i == dw-1 = case newByte of
-        Nothing -> m { mode = InputMode im input } & return
-        Just w -> m { mode = InputMode im (Input ip 0) }
+        Nothing -> m { mode = InputMode im input False } & return
+        Just w -> m { mode = InputMode im (Input ip 0) True }
                     & replace w
                     & case im of
                         ReplaceMode -> curHori Down
                         InsertMode -> (move 1 >>> return)
                     >>= (updateInput >>> followCursor)
     | otherwise =
-        m { mode = InputMode im (Input ip (fromDir dir + i)) } & return
+        m { mode = InputMode im (Input ip (fromDir dir + i)) False } & return
     where bv = bvFocused m
           dw = displayWidth bv
           newByte = toWord bv ip
@@ -449,34 +459,34 @@ inputCurVert (Input ip _) dir m = case newByte of
     where bv = bvFocused m
           newByte = toWord bv ip
 
-inputMode :: InsMode -> Input -> Event -> Model -> EventM Name Model
-inputMode im input vtye = case vtye of
+inputMode :: InsMode -> Input -> Bool -> Event -> Model -> EventM Name Model
+inputMode im input nb vtye = case vtye of
     EvKey KLeft     [] -> inputCurHori im input Up
     EvKey KDown     [] -> inputCurVert input Down
     EvKey KUp       [] -> inputCurVert input Up
     EvKey KRight    [] -> inputCurHori im input Down
-    EvKey KEsc      [] -> exitInputMode input >>> return
+    EvKey KEsc      [] -> exitInputMode input nb >>> return
     _ -> return
 
-replaceMode :: Input -> Event -> Model -> EventM Name Model
-replaceMode input vtye = case vtye of
+replaceMode :: Input -> Bool -> Event -> Model -> EventM Name Model
+replaceMode input nb vtye = case vtye of
     EvKey (KChar c) [] -> replaceChar c input 
-    _ -> inputMode ReplaceMode input vtye
+    _ -> inputMode ReplaceMode input nb vtye
 
-insertMode :: Input -> Event -> Model -> EventM Name Model
-insertMode input vtye = case vtye of
-    EvKey (KChar c) [] -> insertChar c input
+insertMode :: Input -> Bool -> Event -> Model -> EventM Name Model
+insertMode input nb vtye = case vtye of
+    EvKey (KChar c) [] -> insertChar nb c input
     EvKey KBS       [] -> removePrev -- TODO handle individual chars
-    _ -> inputMode InsertMode input vtye
+    _ -> inputMode InsertMode input nb vtye
 
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
 update m (VtyEvent vtye) = case mode m of
     NormalMode cm -> case cm of
         CmdEx cmdLine -> updateExCmd m vtye cmdLine
         CmdNone _ -> normalMode vtye m >>= continue
-    InputMode im input -> case im of
-        ReplaceMode -> replaceMode input vtye m >>= continue
-        InsertMode -> insertMode input vtye m >>= continue
+    InputMode im input nb -> case im of
+        ReplaceMode -> replaceMode input nb vtye m >>= continue
+        InsertMode -> insertMode input nb vtye m >>= continue
 update m _ = continue m
 
 -- character length of hex representation of number
@@ -539,7 +549,7 @@ viewBytes bytes perRow
         | not focused = withAttr attrSelected col
         | otherwise = case mode_ of
             NormalMode _ -> withAttr attrSelectedFocused col
-            InputMode _ (Input ip i) ->
+            InputMode _ (Input ip i) _ ->
                 let attr = case toWord bv ip of
                             Nothing -> attrInvalid
                             Just _ -> attrCurrent
@@ -602,7 +612,7 @@ viewCmdLine m = case mode m of
         CmdNone (Just (Right info)) ->
             withAttr attrDef (str info)
         CmdEx cmdLine -> str ":" <+> renderEditor (str . head) True cmdLine
-    InputMode im _ -> case im of
+    InputMode im _ _ -> case im of
         ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
         InsertMode -> withAttr attrMode $ str "-- INSERT --"
 
