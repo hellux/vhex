@@ -47,7 +47,7 @@ data CmdLineMode = CmdNone
                  deriving (Show)
 
 data Input = Input
-                String  -- fixed length string representation of byte
+                String  -- string representation of byte
                 Int     -- cursor position on selected byte
 data InsMode = ReplaceMode | InsertMode
 
@@ -425,15 +425,17 @@ inputCurHori im input@(Input ip i) dir m
     | dir == Up && i == 0 = case newByte of
         Nothing -> m { mode = InputMode im input } & return
         Just w -> m { mode = InputMode im (Input ip (dw-1)) }
-            & replace w
-            & curHori Up
-            >>= (updateInput >>> return)
+                    & replace w
+                    & curHori Up
+                    >>= (updateInput >>> return)
     | dir == Down && i == dw-1 = case newByte of
         Nothing -> m { mode = InputMode im input } & return
         Just w -> m { mode = InputMode im (Input ip 0) }
-            & replace w
-            & move 1 & followCursor
-            >>= (updateInput >>> return)
+                    & replace w
+                    & case im of
+                        ReplaceMode -> curHori Down
+                        InsertMode -> (move 1 >>> return)
+                    >>= (updateInput >>> followCursor)
     | otherwise =
         m { mode = InputMode im (Input ip (fromDir dir + i)) } & return
     where bv = bvFocused m
