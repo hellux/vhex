@@ -455,32 +455,34 @@ inputCurVert (Input ip _) dir m = case newByte of
 
 inputMode :: InsMode -> Input -> Bool -> Event -> Model -> EventM Name Model
 inputMode im input nb vtye = case vtye of
-    EvKey KLeft     [] -> inputCurHori im input Up
-    EvKey KDown     [] -> inputCurVert input Down
-    EvKey KUp       [] -> inputCurVert input Up
-    EvKey KRight    [] -> inputCurHori im input Down
-    EvKey KEsc      [] -> exitInputMode input nb
-    _ -> return
+    EvKey KLeft        [] -> inputCurHori im input Up
+    EvKey KDown        [] -> inputCurVert input Down
+    EvKey KUp          [] -> inputCurVert input Up
+    EvKey KRight       [] -> inputCurHori im input Down
+    EvKey KEsc         [] -> exitInputMode input nb
+    EvKey (KChar '\t') [] -> curHori Down >=> updateInput >>> return
+    EvKey KBackTab     [] -> curHori Up >=> updateInput >>> return
+    _ -> case im of
+        ReplaceMode -> replaceMode input vtye
+        InsertMode -> insertMode input nb vtye
 
-replaceMode :: Input -> Bool -> Event -> Model -> EventM Name Model
-replaceMode input nb vtye = case vtye of
+replaceMode :: Input -> Event -> Model -> EventM Name Model
+replaceMode input vtye = case vtye of
     EvKey (KChar c) [] -> replaceChar c input 
-    _ -> inputMode ReplaceMode input nb vtye
+    _ -> return
 
 insertMode :: Input -> Bool -> Event -> Model -> EventM Name Model
 insertMode input nb vtye = case vtye of
     EvKey (KChar c) [] -> insertChar nb c input
     EvKey KBS       [] -> removePrev -- TODO handle individual chars
-    _ -> inputMode InsertMode input nb vtye
+    _ -> return
 
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
 update m (VtyEvent vtye) = case mode m of
     NormalMode cm -> case cm of
         CmdEx cmdLine -> updateExCmd m vtye cmdLine
         CmdNone _ -> normalMode vtye m >>= continue
-    InputMode im input nb -> case im of
-        ReplaceMode -> replaceMode input nb vtye m >>= continue
-        InsertMode -> insertMode input nb vtye m >>= continue
+    InputMode im input nb -> inputMode im input nb vtye m >>= continue
 update m _ = continue m
 
 -- character length of hex representation of number
