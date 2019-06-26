@@ -14,8 +14,8 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Category ((>>>))
 import Control.Exception (try, IOException)
 
-import Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as BL
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 
 import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(..))
 import qualified Graphics.Vty as VTY
@@ -34,7 +34,6 @@ import qualified VHex.Buffer as Buf
 
 data Name = EditorViewPort
           | CmdLine
-          | EditorBuffer
           | Cursor
           deriving (Show, Eq, Ord)
 
@@ -68,6 +67,9 @@ data Model = Model
     , mode :: Mode
     }
 
+bvFocused :: Model -> ByteView
+bvFocused m = layout m !! cursorFocus m
+
 bufLen :: Model -> Int
 bufLen = Buf.length . buffer
 
@@ -77,21 +79,15 @@ cursorPos m = Buf.location (buffer m)
 cursorVal :: Model -> Maybe Word8
 cursorVal m = Buf.selected (buffer m)
 
-bvFocused :: Model -> ByteView
-bvFocused m = layout m !! cursorFocus m
+moveTo :: Int -> Model -> Model
+moveTo i m = let i' = BU.clamp 0 (bufLen m) i
+             in m { buffer = Buf.moveTo i' (buffer m) }
 
 move :: Int -> Model -> Model
-move n m = if cursorPos m < bufLen m
-            then m { buffer = Buf.move n (buffer m) }
-            else m
-
-moveTo :: Int -> Model -> Model
-moveTo i m = m { buffer = Buf.moveTo i (buffer m) }
+move n m = m & moveTo (cursorPos m+n)
 
 replace :: Word8 -> Model -> Model
-replace w m = if Buf.null (buffer m)
-    then m
-    else m { buffer = Buf.replace w (buffer m) }
+replace w m = m { buffer = Buf.replace w (buffer m) }
 
 insert :: Word8 -> Model -> Model
 insert w m = m { buffer = Buf.insert w (buffer m) }
@@ -190,7 +186,7 @@ ascii1 :: ByteView
 ascii1 = ByteView
     { fromWord = \w -> if w < 32 || w > 126
                         then "."
-                        else [chr $ fromIntegral w]
+                        else (return . chr . fromIntegral) w
     , _toWord = \w -> if null w
                         then Just 0
                         else (Just . fromIntegral . ord . head) w
@@ -200,7 +196,7 @@ ascii1 = ByteView
 initialModel :: Model
 initialModel = Model
     { filePath = ""
-    , fileContents = BL.empty
+    , fileContents = B.empty
     , buffer = Buf.empty
     , layout = [ hex, ascii1 ]
     , cursorFocus = 0
@@ -217,7 +213,7 @@ bytesPerRow l w byteCount = max 1 $ floorN bytesPerRowMultiple maxBytes where
 
 openFile :: FilePath -> Model -> IO Model
 openFile path m = do
-    contents <- BL.readFile path
+    contents <- B.readFile path
     return m { filePath = path
              , fileContents = contents
              , buffer = Buf.buffer contents
@@ -227,7 +223,7 @@ saveFile:: Model -> IO Model
 saveFile m = do
     let contents = Buf.contents (buffer m)
         path = filePath m
-    res <- try $ BL.writeFile path contents :: IO (Either IOException ())
+    res <- try $ B.writeFile path contents :: IO (Either IOException ())
     case res of
         Left err -> m & errorMsg (show err) & return
         Right _ -> m { fileContents = contents }
@@ -489,7 +485,7 @@ update m _ = continue m
 
 -- character length of hex representation of number
 hexLength :: Int -> Int
-hexLength = ceiling . logBase 16 . (fromIntegral :: Int -> Double)
+hexLength = max 1 . ceiling . logBase 16 . (fromIntegral :: Int -> Double)
 
 hexChars :: String
 hexChars = "0123456789abcdef"
@@ -502,6 +498,8 @@ fromHex (h:ex) = fmap (*size) digit >+< fromHex ex
           size = 16^length ex
 
 toHex :: Int -> Int -> String
+toHex n _ | n < 0 = error "hex length must be non-negative"
+toHex _ d | d < 0 = error "hex number must be non-negative"
 toHex 0 _ = ""
 toHex n d = hexChars !! shifted : toHex (n-1) masked
     where s = 4*(n-1)
@@ -579,7 +577,7 @@ viewEditor m = Widget Greedy Greedy $ do
     ctx <- getContext
     let perRow = bytesPerRow (layout m) (ctx^.availWidthL) (bufLen m)
     let rowCount = ctx^.availHeightL
-    let bytes = BL.unpack
+    let bytes = B.unpack
               $ Buf.slice (scrollPos m) (rowCount*perRow) (buffer m)
     let selectedRow = div (cursorPos m - scrollPos m) perRow
     let selectedCol = mod (cursorPos m) perRow

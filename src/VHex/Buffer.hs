@@ -2,7 +2,7 @@ module VHex.Buffer
 ( Buffer
 , empty, singleton, buffer
 , selected, location, length
-, index, slice, contents, null
+, slice, contents, null
 , move, moveTo
 , insert, replace, remove
 ) where
@@ -10,17 +10,23 @@ module VHex.Buffer
 import Prelude hiding (length, null)
 
 import Data.Word
-import Data.Maybe (fromJust)
+import Data.Maybe (isNothing)
+import Data.List (intersperse)
 
-import Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as B
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 
 data Buffer = Buffer { prev :: ByteString
                      , selected :: Maybe Word8
                      , location :: Int
                      , length :: Int
                      , next :: ByteString
-                     } deriving (Show)
+                     }
+
+instance Show Buffer where
+    show buf = fromBS (prev buf) ++ sel ++ fromBS (next buf) where
+        fromBS bs = intersperse ' ' $ concatMap show $ B.unpack bs
+        sel = " [" ++ maybe " " show (selected buf) ++ "] "
 
 -- constructing
 
@@ -30,7 +36,6 @@ empty = Buffer B.empty Nothing 0 0 B.empty
 singleton :: Word8 -> Buffer
 singleton w = Buffer B.empty (Just w) 0 1 B.empty
 
--- TODO use strict bytestring or get length from file system?
 buffer :: ByteString -> Buffer
 buffer bs
     | B.null bs = empty
@@ -38,19 +43,13 @@ buffer bs
                       len = fromIntegral $ B.length bs -- whole file read here
                   in Buffer B.empty (Just h) 0 len t
 
--- accessing
-
-index :: Buffer -> Int -> Word8
-index buf i
-    | i < l = B.index (prev buf) $ fromIntegral (l-i-1)
-    | i > l = B.index (next buf) $ fromIntegral (i-l-1)
-    | otherwise = fromJust (selected buf)
-    where l = location buf
+-- accessing / querying
 
 slice :: Int -> Int -> Buffer -> ByteString
-slice start count buf = B.cons v $ B.take (fromIntegral count-1) (next moved)
+slice start count buf = case selected moved of
+    Nothing -> B.empty
+    Just v -> B.cons v $ B.take (fromIntegral count-1) (next moved)
     where moved = moveTo start buf
-          v = fromJust (selected moved)
 
 contents :: Buffer -> ByteString
 contents buf = slice 0 (length buf - 1) buf
@@ -62,6 +61,10 @@ null buf = length buf == 0
 
 move :: Int -> Buffer -> Buffer
 move d buf
+    | fromIntegral d < -B.length (prev buf) =
+        error $ "move: exceeding lower bounds:"
+    | fromIntegral d > B.length (next buf) + 1 =
+        error "move: exceeding upper bounds"
     | d < 0 = buf
         { prev = B.drop n (prev buf)
         , selected = Just $ B.index (prev buf) (n-1)
@@ -106,8 +109,8 @@ insert w buf = case selected buf of
 
 replace :: Word8 -> Buffer -> Buffer
 replace w buf
-    | null buf = error "empty buffer"
-    | selected buf == Nothing = insert w buf
+    | null buf = insert w buf
+    | isNothing (selected buf) = insert w buf
     | otherwise = buf { selected = Just w }
 
 remove :: Buffer -> Buffer
