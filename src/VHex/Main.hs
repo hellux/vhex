@@ -124,7 +124,7 @@ attrInvalid :: AttrName
 attrOffset :: AttrName
 attrOffsetCursorLine :: AttrName
 attrError :: AttrName
-attrStatusBar :: AttrName
+attrStatusLine :: AttrName
 attrMode :: AttrName
 attrCurrent = attrName "current"
 attrDef = attrName "def"
@@ -134,7 +134,7 @@ attrSelectedFocused = attrName "selectedFocused"
 attrInvalid = attrName "invalid"
 attrOffset = attrName "offset"
 attrOffsetCursorLine = attrName "offsetCursorLine"
-attrStatusBar = attrName "statusbar"
+attrStatusLine = attrName "statusline"
 attrMode = attrName "mode"
 attrError = attrName "error"
 
@@ -148,7 +148,7 @@ attributes = attrMap mempty
     , (attrInvalid, red `BU.on` grey23)
     , (attrOffset, BU.fg grey)
     , (attrOffsetCursorLine, yellow `BU.on` grey23)
-    , (attrStatusBar, BU.bg grey30)
+    , (attrStatusLine, BU.bg grey30)
     , (attrMode, BU.fg yellow `VTY.withStyle` VTY.bold)
     , (attrError, grey15 `BU.on` red `VTY.withStyle` VTY.bold)
     ] where fg = VTY.brightWhite
@@ -595,8 +595,8 @@ viewEditor m = Widget Greedy Greedy $ do
         $ hBox
         $ offset : views ++ [ withAttr attrDef $ fill ' ' ]
 
-viewStatusBar :: Model -> Widget Name
-viewStatusBar m = withAttr attrStatusBar $ str $
+viewStatusLine :: Model -> Widget Name
+viewStatusLine m = withAttr attrStatusLine $ str $
     filePath m ++ ": "
     ++ show (cursorPos m) ++ ", "
     ++ show (scrollPos m) ++ "  "
@@ -615,7 +615,7 @@ viewCmdLine m = case mode m of
         InsertMode -> withAttr attrMode $ str "-- INSERT --"
 
 view :: Model -> [Widget Name]
-view m = [ viewEditor m <=> viewStatusBar m <=> viewCmdLine m ]
+view m = [ viewEditor m <=> viewStatusLine m <=> viewCmdLine m ]
 
 app :: App Model e Name
 app = App { appDraw = view
