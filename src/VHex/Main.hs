@@ -191,7 +191,7 @@ ascii1 = ByteView
                         then "."
                         else (return . chr . fromIntegral) w
     , _toWord = \w -> case w of
-                        "" -> Nothing
+                        "" -> Just 0
                         c:_ -> (Just . fromIntegral . ord ) c
     , spaceWidth = 0
     }
@@ -424,11 +424,16 @@ inputSave :: Model -> Model
 inputSave m = case mode m of
         InputMode _ (Input ip _) _ ->
             if ip == ""
-                then m & remove
+                then m & remove & inputNewByte & inputLoad
                 else case toWord (bvFocused m) ip of
                     Nothing -> m
                     Just w -> m & replace w
         _ -> m
+
+inputNewByte :: Model -> Model
+inputNewByte m = case mode m of
+    InputMode im input _ -> m { mode = InputMode im input True }
+    _ -> m
 
 inputValid :: Model -> Bool
 inputValid m = case mode m of
@@ -441,14 +446,19 @@ inputValid m = case mode m of
 inputRemove :: Model -> EventM Name Model
 inputRemove m = case mode m of
     InputMode _ (Input _ i) _
-        | i == 0 -> m & inputCurHori Up >>= (inputLoad >>> inputDelete >>> return)
+        | i == 0 && cursorPos m == 0 -> m & return
+        | i == 0 -> m & inputCurHori Up
+                      >>= (inputLoad
+                      >>> inputDelete
+                      >>> inputSave
+                      >>> return)
         | otherwise -> m & inputCurHori Up >>= (inputDelete >>> return)
     _ -> m & return
 
 inputDelete :: Model -> Model
 inputDelete m = case mode m of
-    InputMode im (Input ip i) nb ->
-        m { mode = InputMode im (Input newIp i) nb }
+    InputMode im (Input ip i) _ ->
+        m { mode = InputMode im (Input newIp i) False }
         where newIp = take i ip ++ drop (i+1) ip
     _ -> m
 
@@ -493,16 +503,16 @@ inputCurVert dir m = m & inputSave & curVert dir >>= (inputLoad >>> return)
 
 inputReplace :: Char -> Model -> Model
 inputReplace c m = case mode m of
-    InputMode im (Input ip i) nb -> m { mode = InputMode im newInput nb }
+    InputMode im (Input ip i) _ -> m { mode = InputMode im newInput False }
         where newInput = Input (ip & ix i .~ c) i
     _ -> m
 
 inputInsert :: Char -> Model -> EventM Name Model
 inputInsert c m = case mode m of
     InputMode im (Input ip i) nb
-        | nb -> m { mode = InputMode im (Input [c] i) nb }
+        | nb -> m { mode = InputMode im (Input [c] i) False }
                 & (insert 0 >>> return) >>= inputCurHori Down
-        | otherwise -> m { mode = InputMode im (Input newIp i) nb }
+        | otherwise -> m { mode = InputMode im (Input newIp i) False }
                         & inputCurHori Down
         where newIp = take dw $ take i ip ++ [c] ++ drop i ip
               dw = displayWidth (bvFocused m)
