@@ -48,8 +48,10 @@ data CmdLineMode = CmdNone
 data Input = Input
                 String  -- string representation of byte
                 Int     -- cursor position on selected byte
+            deriving (Show)
 data InsMode = ReplaceMode
              | InsertMode
+             deriving (Show)
 
 data Mode = NormalMode CmdLineMode
           | InputMode
@@ -167,7 +169,8 @@ data ByteView = ByteView {
 }
 
 trim :: String -> String
-trim = dropWhileEnd isSpace . dropWhile isSpace
+trim " " = " "
+trim s = (dropWhileEnd isSpace . dropWhile isSpace) s
 
 toWord :: ByteView -> String -> Maybe Word8
 toWord bv = _toWord bv . trim
@@ -292,7 +295,12 @@ goToTop = moveTo 0 >>> followCursor
 curHori :: Direction -> Model -> EventM Name Model
 curHori dir m = m & moveTo newPos & followCursor
     where d = fromDir dir
-          newPos = BU.clamp 0 (bufLen m - 1) (cursorPos m + d)
+          maxPos = case mode m of
+            InputMode im _ _ -> case im of
+                InsertMode -> bufLen m
+                _ -> bufLen m - 1
+            _ -> bufLen m - 1
+          newPos = BU.clamp 0 maxPos (cursorPos m + d)
 
 curVert :: Direction -> Model -> EventM Name Model
 curVert dir m = viewportSize >>= curVert' >>= followCursor where
@@ -382,99 +390,150 @@ normalMode vtye = case vtye of
 enterCmdLine :: Model -> Model
 enterCmdLine m = m { mode = NormalMode $ CmdEx (editor CmdLine (Just 1) "") }
 
-exitInputMode :: Input -> Bool -> Model -> EventM Name Model
-exitInputMode (Input ip _) nb m = m { mode = NormalMode $ CmdNone Nothing }
-                                    & if nb
-                                        then curHori Up
-                                        else replace newByte >>> return
-    where current = fromMaybe 0 (cursorVal m)
-          newByte = fromMaybe current $ toWord (bvFocused m) ip
+exitInputMode :: Model -> EventM Name Model
+exitInputMode m = case mode m of
+    InputMode _ (Input ip _) nb
+        | nb        -> m' & curHori Up
+        | ip == ""  -> m' & remove & curHori Up
+        | otherwise -> m' & replace newByte & return
+        where m' = m { mode = NormalMode $ CmdNone Nothing }
+              current = fromMaybe 0 (cursorVal m)
+              newByte = fromMaybe current $ toWord (bvFocused m) ip
+    _ -> m & return
 
 enterReplaceMode :: Model -> Model
 enterReplaceMode m
     | Buf.null (buffer m) = m
     | otherwise = m { mode = InputMode ReplaceMode (Input "" 0) True }
-                    & updateInput
+                    & inputLoad
 
 enterInsertMode :: Model -> Model
 enterInsertMode m =
     m { mode = InputMode InsertMode (Input "" 0) True }
-                & updateInput
+                & inputLoad
 
-replaceChar :: Char -> Input -> Model -> EventM Name Model
-replaceChar c (Input ip i) m = m & inputCurHori ReplaceMode newInput Down
-    where newInput = Input (ip & ix i .~ c) i
-
-insertChar :: Bool -> Char -> Input -> Model -> EventM Name Model
-insertChar isNew c (Input ip i) m
-    | isNew = m & inputCurHori InsertMode (Input [c] i) Down
-            >>= (insert 0 >>> return)
-    | otherwise = if length newIp > dw
-        then m & return
-        else m & inputCurHori InsertMode (Input newIp i) Down
-    where newIp = take i ip ++ [c] ++ drop i ip
-          dw = displayWidth (bvFocused m) 
-
-updateInput :: Model -> Model
-updateInput m = case mode m of
+inputLoad :: Model -> Model
+inputLoad m = case mode m of
     NormalMode _ -> m
     InputMode im (Input _ i) nb -> m { mode = InputMode im (Input newIp i) nb }
     where newIp = case cursorVal m of
                     Nothing -> ""
                     Just w -> fromWord (bvFocused m) w
 
-inputCurHori :: InsMode -> Input -> Direction -> Model -> EventM Name Model
-inputCurHori im input@(Input ip i) dir m
-    | dir == Up && i == 0 && cursorPos m == 0 = m & return
-    | dir == Up && i == 0 = case newByte of
-        Nothing -> m { mode = InputMode im input False } & return
-        Just w -> m { mode = InputMode im (Input ip (dw-1)) True }
-                    & replace w
-                    & curHori Up
-                    >>= (updateInput >>> return)
-    | dir == Down && i == dw-1 = case newByte of
-        Nothing -> m { mode = InputMode im input False } & return
-        Just w -> m { mode = InputMode im (Input ip 0) True }
-                    & replace w
-                    & case im of
-                        ReplaceMode -> curHori Down
-                        InsertMode -> move 1 >>> return
-                    >>= (updateInput >>> followCursor)
-    | otherwise =
-        m { mode = InputMode im (Input ip (fromDir dir + i)) False } & return
-    where bv = bvFocused m
-          dw = displayWidth bv
-          newByte = toWord bv ip
+inputSave :: Model -> Model
+inputSave m = case mode m of
+        InputMode _ (Input ip _) _ ->
+            if ip == ""
+                then m & remove
+                else case toWord (bvFocused m) ip of
+                    Nothing -> m
+                    Just w -> m & replace w
+        _ -> m
 
-inputCurVert :: Input -> Direction -> Model -> EventM Name Model
-inputCurVert (Input ip _) dir m = case newByte of
-    Nothing -> m & return
-    Just w -> m & replace w & curVert dir >>= (updateInput >>> return)
-    where bv = bvFocused m
-          newByte = toWord bv ip
+inputValid :: Model -> Bool
+inputValid m = case mode m of
+    InputMode _ (Input ip _) _ ->
+        case toWord (bvFocused m) ip of
+            Just _ -> True
+            _ -> False
+    _ -> False
 
-inputMode :: InsMode -> Input -> Bool -> Event -> Model -> EventM Name Model
-inputMode im input nb vtye = case vtye of
-    EvKey KLeft        [] -> inputCurHori im input Up
-    EvKey KDown        [] -> inputCurVert input Down
-    EvKey KUp          [] -> inputCurVert input Up
-    EvKey KRight       [] -> inputCurHori im input Down
-    EvKey KEsc         [] -> exitInputMode input nb
-    EvKey (KChar '\t') [] -> curHori Down >=> updateInput >>> return
-    EvKey KBackTab     [] -> curHori Up >=> updateInput >>> return
+inputRemove :: Model -> EventM Name Model
+inputRemove m = case mode m of
+    InputMode _ (Input _ i) _
+        | i == 0 -> m & inputCurHori Up >>= (inputLoad >>> inputDelete >>> return)
+        | otherwise -> m & inputCurHori Up >>= (inputDelete >>> return)
+    _ -> m & return
+
+inputDelete :: Model -> Model
+inputDelete m = case mode m of
+    InputMode im (Input ip i) nb ->
+        m { mode = InputMode im (Input newIp i) nb }
+        where newIp = take i ip ++ drop (i+1) ip
+    _ -> m
+
+inputMove :: Direction -> Model -> Model
+inputMove dir m = case mode m of
+    InputMode im (Input ip i) _ ->
+        m { mode = InputMode im (Input ip newPos) False }
+        where newPos = case dir of Up -> i-1; Down -> i+1
+    _ -> m
+
+inputMoveTo :: Int -> Model -> Model
+inputMoveTo i m = case mode m of
+    InputMode im (Input ip _) _ ->
+        m { mode = InputMode im (Input ip i) (i==0) }
+    _ -> m
+
+inputCurHori :: Direction -> Model -> EventM Name Model
+inputCurHori dir m = case mode m of
+    InputMode im (Input _ i) _
+        | onLeftEdge  && cursorPos m == 0      -> m & return
+        | onRightEdge && cursorPos m == maxPos -> m & return
+        | inputValid m && (onLeftEdge || onRightEdge) ->
+            m & inputMoveTo (case dir of Up -> dw-1; Down -> 0)
+              & inputSave
+              & curHori dir
+              >>= (inputLoad >>> followCursor)
+        | onLeftEdge || onRightEdge ->
+            m & return
+        | otherwise -> m & inputMove dir
+                         & inputSave
+                         & return
+        where dw = displayWidth (bvFocused m)
+              maxPos = case im of
+                        InsertMode -> bufLen m
+                        ReplaceMode -> bufLen m-1
+              onLeftEdge  = dir == Up   && i == 0
+              onRightEdge = dir == Down && i == dw-1
+    _ -> m & return
+
+inputCurVert :: Direction -> Model -> EventM Name Model
+inputCurVert dir m = m & inputSave & curVert dir >>= (inputLoad >>> return)
+
+inputReplace :: Char -> Model -> Model
+inputReplace c m = case mode m of
+    InputMode im (Input ip i) nb -> m { mode = InputMode im newInput nb }
+        where newInput = Input (ip & ix i .~ c) i
+    _ -> m
+
+inputInsert :: Char -> Model -> EventM Name Model
+inputInsert c m = case mode m of
+    InputMode im (Input ip i) nb
+        | nb -> m { mode = InputMode im (Input [c] i) nb }
+                & (insert 0 >>> return) >>= inputCurHori Down
+        | otherwise -> m { mode = InputMode im (Input newIp i) nb }
+                        & inputCurHori Down
+        where newIp = take dw $ take i ip ++ [c] ++ drop i ip
+              dw = displayWidth (bvFocused m)
+    _ -> m & return
+
+inputMode :: InsMode -> Event -> Model -> EventM Name Model
+inputMode im vtye = case vtye of
+    EvKey KLeft        [] -> inputCurHori Up
+    EvKey KDown        [] -> inputCurVert Down
+    EvKey KUp          [] -> inputCurVert Up
+    EvKey KRight       [] -> inputCurHori Down
+    EvKey KEsc         [] -> exitInputMode
+    EvKey KEnter       [] -> exitInputMode
+    EvKey (KChar '\t') [] -> curHori Down >=> inputMoveTo 0 >>> inputLoad
+                                          >>> return
+    EvKey KBackTab     [] -> curHori Up >=> inputMoveTo 0 >>> inputLoad
+                                        >>> return
+    EvKey KDel         [] -> inputDelete >>> return
     _ -> case im of
-        ReplaceMode -> replaceMode input vtye
-        InsertMode -> insertMode input nb vtye
+        ReplaceMode -> replaceMode vtye
+        InsertMode -> insertMode vtye
 
-replaceMode :: Input -> Event -> Model -> EventM Name Model
-replaceMode input vtye = case vtye of
-    EvKey (KChar c) [] -> replaceChar c input 
+replaceMode :: Event -> Model -> EventM Name Model
+replaceMode vtye = case vtye of
+    EvKey (KChar c) [] -> inputReplace c >>> inputCurHori Down
     _ -> return
 
-insertMode :: Input -> Bool -> Event -> Model -> EventM Name Model
-insertMode input nb vtye = case vtye of
-    EvKey (KChar c) [] -> insertChar nb c input
-    EvKey KBS       [] -> removePrev -- TODO handle individual chars
+insertMode :: Event -> Model -> EventM Name Model
+insertMode vtye = case vtye of
+    EvKey (KChar c) [] -> inputInsert c
+    EvKey KBS       [] -> inputRemove
     _ -> return
 
 update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
@@ -482,7 +541,7 @@ update m (VtyEvent vtye) = case mode m of
     NormalMode cm -> case cm of
         CmdEx cmdLine -> updateExCmd m vtye cmdLine
         CmdNone _ -> normalMode vtye m >>= continue
-    InputMode im input nb -> inputMode im input nb vtye m >>= continue
+    InputMode im _ _ -> inputMode im vtye m >>= continue
 update m _ = continue m
 
 -- character length of hex representation of number
@@ -599,7 +658,11 @@ viewStatusLine :: Model -> Widget Name
 viewStatusLine m = withAttr attrStatusLine $ str $
     filePath m ++ ": "
     ++ show (cursorPos m) ++ ", "
-    ++ show (scrollPos m) ++ "  "
+    ++ show (bufLen m) ++ "  "
+    ++ case mode m of
+        NormalMode _ -> ""
+        InputMode im input nb ->
+            "Input " ++ show im ++ " " ++ show input ++ " " ++ show nb
 
 viewCmdLine :: Model -> Widget Name
 viewCmdLine m = case mode m of
