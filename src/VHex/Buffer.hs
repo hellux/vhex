@@ -62,7 +62,7 @@ null buf = length buf == 0
 move :: Int -> Buffer -> Buffer
 move d buf
     | fromIntegral d < -B.length (prev buf) =
-        error $ "move: exceeding lower bounds:"
+        error "move: exceeding lower bounds:"
     | fromIntegral d > B.length (next buf) + 1 =
         error "move: exceeding upper bounds"
     | d < 0 = buf
@@ -115,15 +115,13 @@ replace w buf
 
 remove :: Buffer -> Buffer
 remove buf
+    | isNothing (selected buf) = buf
     | not $ B.null (next buf) = buf { selected = Just $ B.head (next buf)
                                     , length = length buf - 1
                                     , next = B.tail (next buf)
                                     }
-    | not $ B.null (prev buf) = buf { prev = B.tail (prev buf)
-                                    , selected = Just $ B.head (prev buf)
-                                    , location = i-1
+    | not $ B.null (prev buf) = buf { selected = Nothing
                                     , length = length buf - 1
                                     }
     | not $ null buf = empty
     | otherwise = error "empty buffer"
-    where i = location buf
