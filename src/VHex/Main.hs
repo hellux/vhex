@@ -29,8 +29,8 @@ import qualified Brick.Util as BU
 import Brick.Widgets.Core
 import Brick.Widgets.Edit
 
-import VHex.Buffer (Buffer)
-import qualified VHex.Buffer as Buf
+import VHex.ByteZipper (ByteZipper)
+import qualified VHex.ByteZipper as BZ
 
 data Name = EditorViewPort
           | CmdLine
@@ -62,7 +62,7 @@ data Mode = NormalMode CmdLineMode
 data Model = Model
     { filePath :: FilePath
     , fileContents :: ByteString
-    , buffer :: Buffer
+    , buffer :: ByteZipper
     , layout :: [ByteView]
     , cursorFocus :: Int            -- focused view by index
     , scrollPos :: Int              -- offset to visible top left byte
@@ -73,31 +73,31 @@ bvFocused :: Model -> ByteView
 bvFocused m = layout m !! cursorFocus m
 
 bufLen :: Model -> Int
-bufLen = Buf.length . buffer
+bufLen = BZ.length . buffer
 
 cursorPos :: Model -> Int
-cursorPos m = Buf.location (buffer m)
+cursorPos m = BZ.location (buffer m)
 
 cursorVal :: Model -> Maybe Word8
-cursorVal m = Buf.selected (buffer m)
+cursorVal m = BZ.selected (buffer m)
 
 moveTo :: Int -> Model -> Model
 moveTo i m = let i' = BU.clamp 0 (bufLen m) i
-             in m { buffer = Buf.moveTo i' (buffer m) }
+             in m { buffer = BZ.moveTo i' (buffer m) }
 
 move :: Int -> Model -> Model
 move n m = m & moveTo (cursorPos m+n)
 
 replace :: Word8 -> Model -> Model
-replace w m = m { buffer = Buf.replace w (buffer m) }
+replace w m = m { buffer = BZ.replace w (buffer m) }
 
 insert :: Word8 -> Model -> Model
-insert w m = m { buffer = Buf.insert w (buffer m) }
+insert w m = m { buffer = BZ.insert w (buffer m) }
 
 remove :: Model -> Model
-remove m = if Buf.null (buffer m)
+remove m = if BZ.null (buffer m)
     then m
-    else m { buffer = Buf.remove (buffer m) }
+    else m { buffer = BZ.remove (buffer m) }
 
 removePrev :: Model -> EventM Name Model
 removePrev m = if cursorPos m == 0
@@ -190,9 +190,9 @@ ascii1 = ByteView
     { fromWord = \w -> if w < 32 || w > 126
                         then "."
                         else (return . chr . fromIntegral) w
-    , _toWord = \w -> if null w
-                        then Just 0
-                        else (Just . fromIntegral . ord . head) w
+    , _toWord = \w -> case w of
+                        "" -> Nothing
+                        c:_ -> (Just . fromIntegral . ord ) c
     , spaceWidth = 0
     }
 
@@ -200,7 +200,7 @@ initialModel :: Model
 initialModel = Model
     { filePath = ""
     , fileContents = B.empty
-    , buffer = Buf.empty
+    , buffer = BZ.empty
     , layout = [ hex, ascii1 ]
     , cursorFocus = 0
     , scrollPos = 0
@@ -219,12 +219,12 @@ openFile path m = do
     contents <- B.readFile path
     return m { filePath = path
              , fileContents = contents
-             , buffer = Buf.buffer contents
+             , buffer = BZ.byteZipper contents
              }
 
 saveFile:: Model -> IO Model
 saveFile m = do
-    let contents = Buf.contents (buffer m)
+    let contents = BZ.contents (buffer m)
         path = filePath m
     res <- try $ B.writeFile path contents :: IO (Either IOException ())
     case res of
@@ -403,7 +403,7 @@ exitInputMode m = case mode m of
 
 enterReplaceMode :: Model -> Model
 enterReplaceMode m
-    | Buf.null (buffer m) = m
+    | BZ.null (buffer m) = m
     | otherwise = m { mode = InputMode ReplaceMode (Input "" 0) True }
                     & inputLoad
 
@@ -639,7 +639,7 @@ viewEditor m = Widget Greedy Greedy $ do
     let perRow = bytesPerRow (layout m) (ctx^.availWidthL) (bufLen m)
     let rowCount = ctx^.availHeightL
     let bytes = B.unpack
-              $ Buf.slice (scrollPos m) (rowCount*perRow) (buffer m)
+              $ BZ.slice (scrollPos m) (rowCount*perRow) (buffer m)
     let selectedRow = div (cursorPos m - scrollPos m) perRow
     let selectedCol = mod (cursorPos m) perRow
     let offset = withAttr attrOffset

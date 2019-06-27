@@ -1,6 +1,6 @@
-module VHex.Buffer
-( Buffer
-, empty, singleton, buffer
+module VHex.ByteZipper
+( ByteZipper
+, empty, singleton, byteZipper
 , selected, location, length
 , slice, contents, null
 , move, moveTo
@@ -16,50 +16,50 @@ import Data.List (intersperse)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
-data Buffer = Buffer { prev :: ByteString
+data ByteZipper = ByteZipper { prev :: ByteString
                      , selected :: Maybe Word8
                      , location :: Int
                      , length :: Int
                      , next :: ByteString
                      }
 
-instance Show Buffer where
+instance Show ByteZipper where
     show buf = fromBS (prev buf) ++ sel ++ fromBS (next buf) where
         fromBS bs = intersperse ' ' $ concatMap show $ B.unpack bs
         sel = " [" ++ maybe " " show (selected buf) ++ "] "
 
 -- constructing
 
-empty :: Buffer
-empty = Buffer B.empty Nothing 0 0 B.empty
+empty :: ByteZipper
+empty = ByteZipper B.empty Nothing 0 0 B.empty
 
-singleton :: Word8 -> Buffer
-singleton w = Buffer B.empty (Just w) 0 1 B.empty
+singleton :: Word8 -> ByteZipper
+singleton w = ByteZipper B.empty (Just w) 0 1 B.empty
 
-buffer :: ByteString -> Buffer
-buffer bs
+byteZipper :: ByteString -> ByteZipper
+byteZipper bs
     | B.null bs = empty
     | otherwise = let (h, t) = (B.head bs, B.tail bs)
                       len = fromIntegral $ B.length bs -- whole file read here
-                  in Buffer B.empty (Just h) 0 len t
+                  in ByteZipper B.empty (Just h) 0 len t
 
 -- accessing / querying
 
-slice :: Int -> Int -> Buffer -> ByteString
+slice :: Int -> Int -> ByteZipper -> ByteString
 slice start count buf = case selected moved of
     Nothing -> B.empty
     Just v -> B.cons v $ B.take (fromIntegral count-1) (next moved)
     where moved = moveTo start buf
 
-contents :: Buffer -> ByteString
+contents :: ByteZipper -> ByteString
 contents buf = slice 0 (length buf - 1) buf
 
-null :: Buffer -> Bool
+null :: ByteZipper -> Bool
 null buf = length buf == 0
 
 -- cursor modification
 
-move :: Int -> Buffer -> Buffer
+move :: Int -> ByteZipper -> ByteZipper
 move d buf
     | fromIntegral d < -B.length (prev buf) =
         error "move: exceeding lower bounds:"
@@ -89,12 +89,12 @@ move d buf
         i = location buf
         n = fromIntegral $ abs d
 
-moveTo :: Int -> Buffer -> Buffer
+moveTo :: Int -> ByteZipper -> ByteZipper
 moveTo i buf = move (i-location buf) buf
 
 -- modifiation of contents
 
-insert :: Word8 -> Buffer -> Buffer
+insert :: Word8 -> ByteZipper -> ByteZipper
 insert w buf = case selected buf of
     Nothing -> if location buf == length buf
                 then buf { selected = Just w
@@ -107,13 +107,13 @@ insert w buf = case selected buf of
                   , next = B.cons v (next buf)
                   }
 
-replace :: Word8 -> Buffer -> Buffer
+replace :: Word8 -> ByteZipper -> ByteZipper
 replace w buf
     | null buf = insert w buf
     | isNothing (selected buf) = insert w buf
     | otherwise = buf { selected = Just w }
 
-remove :: Buffer -> Buffer
+remove :: ByteZipper -> ByteZipper
 remove buf
     | isNothing (selected buf) = buf
     | not $ B.null (next buf) = buf { selected = Just $ B.head (next buf)
@@ -124,4 +124,4 @@ remove buf
                                     , length = length buf - 1
                                     }
     | not $ null buf = empty
-    | otherwise = error "empty buffer"
+    | otherwise = error "empty bytezipper"
