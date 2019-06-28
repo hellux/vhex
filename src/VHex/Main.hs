@@ -3,13 +3,11 @@ module VHex.Main (vhex) where
 import System.IO (FilePath)
 import System.Environment (getArgs)
 
-import Data.Bits ((.&.), shiftR, shiftL)
 import Data.Word (Word8)
-import Data.Char (chr, ord, toLower, isSpace)
-import Data.List (elemIndex, intersperse, dropWhileEnd)
+import Data.List (intersperse)
 import Data.Maybe (fromMaybe)
 
-import Control.Monad (liftM2, (>=>))
+import Control.Monad ((>=>))
 import Control.Monad.IO.Class (liftIO)
 import Control.Category ((>>>))
 import Control.Exception (try, IOException)
@@ -31,6 +29,13 @@ import Brick.Widgets.Edit
 
 import VHex.ByteZipper (ByteZipper)
 import qualified VHex.ByteZipper as BZ
+
+import VHex.ByteView (ByteView, toWord, fromWord, spaceWidth, displayWidth)
+import qualified VHex.ByteView as BV
+
+import VHex.Util (hexLength, floorN, padOut, groupsOf)
+
+import Numeric
 
 data Name = EditorViewPort
           | CmdLine
@@ -76,10 +81,10 @@ bufLen :: Model -> Int
 bufLen = BZ.length . buffer
 
 cursorPos :: Model -> Int
-cursorPos m = BZ.location (buffer m)
+cursorPos = BZ.location . buffer
 
 cursorVal :: Model -> Maybe Word8
-cursorVal m = BZ.selected (buffer m)
+cursorVal = BZ.selected . buffer
 
 moveTo :: Int -> Model -> Model
 moveTo i m = let i' = BU.clamp 0 (bufLen m) i
@@ -162,46 +167,12 @@ attributes = attrMap mempty
             grey23 = VTY.rgbColor (58::Int) (58::Int) (58::Int)
             grey30 = VTY.rgbColor (78::Int) (78::Int) (78::Int)
 
-data ByteView = ByteView {
-    fromWord :: Word8 -> String,
-    _toWord :: String -> Maybe Word8,
-    spaceWidth :: Int
-}
-
-trim :: String -> String
-trim " " = " "
-trim s = (dropWhileEnd isSpace . dropWhile isSpace) s
-
-toWord :: ByteView -> String -> Maybe Word8
-toWord bv = _toWord bv . trim
-
-displayWidth :: ByteView -> Int
-displayWidth bv = textWidth $ fromWord bv 0
-
-hex :: ByteView
-hex = ByteView
-    { fromWord = toHex 2 . fromIntegral
-    , _toWord = fmap fromIntegral . fromHex
-    , spaceWidth = 1
-    }
-
-ascii1 :: ByteView
-ascii1 = ByteView
-    { fromWord = \w -> if w < 32 || w > 126
-                        then "."
-                        else (return . chr . fromIntegral) w
-    , _toWord = \w -> case w of
-                        "" -> Just 0
-                        c:_ -> (Just . fromIntegral . ord ) c
-    , spaceWidth = 0
-    }
-
 initialModel :: Model
 initialModel = Model
     { filePath = ""
     , fileContents = B.empty
     , buffer = BZ.empty
-    , layout = [ hex, ascii1 ]
+    , layout = [ BV.hex, BV.asciiCaret ]
     , cursorFocus = 0
     , scrollPos = 0
     , mode = NormalMode (CmdNone Nothing)
@@ -232,6 +203,7 @@ saveFile m = do
         Right _ -> m { fileContents = contents }
                     & infoMsg (show path ++ " written")
                     & return
+    return m
 
 viewportSize :: EventM Name (Int, Int)
 viewportSize = do
@@ -495,10 +467,11 @@ inputCurHori dir m
     | onLeftEdge  && cursorPos m == 0      = m & return
     | onRightEdge && cursorPos m == maxPos = m & return
     | inputValid m && (onLeftEdge || onRightEdge) =
-        m & inputMoveTo (case dir of Up -> dw-1; Down -> 0)
-          & inputSave
-          & curHori dir
-          >>= (inputLoad >>> followCursor)
+        m & (inputSave
+         >>> curHori dir
+         >=> inputMoveTo (case dir of Up -> dw-1; Down -> 0)
+         >>> inputLoad
+         >>> followCursor)
     | onLeftEdge || onRightEdge = m & return
     | otherwise = m & inputMove dir
                     & inputNewByte False
@@ -562,56 +535,16 @@ update m (VtyEvent vtye) = case mode m of
     InputMode im _ _ -> inputMode im vtye m >>= continue
 update m _ = continue m
 
--- character length of hex representation of number
-hexLength :: Int -> Int
-hexLength = max 1 . ceiling . logBase 16 . (fromIntegral :: Int -> Double)
-
-hexChars :: String
-hexChars = "0123456789abcdef"
-
-fromHex :: String -> Maybe Int
-fromHex [] = Just 0
-fromHex (h:ex) = fmap (*size) digit >+< fromHex ex
-    where (>+<) = liftM2 (+) :: Maybe Int -> Maybe Int -> Maybe Int
-          digit = elemIndex (toLower h) hexChars :: Maybe Int
-          size = 16^length ex
-
-toHex :: Int -> Int -> String
-toHex n _ | n < 0 = error "hex length must be non-negative"
-toHex _ d | d < 0 = error "hex number must be non-negative"
-toHex 0 _ = ""
-toHex n d = hexChars !! shifted : toHex (n-1) masked
-    where s = 4*(n-1)
-          shifted = shiftR d s .&. 0xf
-          masked = d .&. (shiftL 1 s - 1)
-
--- round down to closest multiple of n
-floorN :: Int -> Int -> Int
-floorN n x = x - mod x n
-
--- fill xs with p until length is n
-padOut :: Int -> a -> [a] -> [a]
-padOut n p xs
-    | len < n = xs ++ replicate (n-len) p
-    | otherwise = xs
-    where len = length xs
-
--- split xs into lists with length n
-groupsOf :: Int -> [a] -> [[a]]
-groupsOf _ [] = []
-groupsOf n xs = let (y,ys) = splitAt n xs
-                in y : groupsOf n ys
-
 viewOffset :: Int -> Int -> Int -> Int -> Int -> Widget Name
 viewOffset start step selected maxAddr rowCount = vBox rows where
     styleRow r = if cursorLine && r == selected
                     then attrOffsetCursorLine
                     else attrOffset
     display offset = if offset <= maxAddr
-                        then toHex (hexLength maxAddr) offset
+                        then showHex offset ""
                         else "~"
     rows = ( zipWith withAttr (fmap styleRow [0..rowCount-1])
-           . fmap (str . display)
+           . fmap (hLimit (hexLength maxAddr) . padLeft Max . str . display)
            ) [start, start+step..]
 
 viewBytes :: [Word8] -> Int -> (Int, Int) -> Mode -> (Bool, ByteView)

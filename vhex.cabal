@@ -19,6 +19,8 @@ source-repository head
 library
   exposed-modules:  VHex.Main
                     VHex.ByteZipper
+                    VHex.ByteView
+                    VHex.Util
   hs-source-dirs:   src
   build-depends:    base >=4.12 && <4.13
                   , text >=1.2 && <1.3
