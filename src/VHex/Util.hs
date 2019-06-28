@@ -2,7 +2,14 @@ module VHex.Util ( hexLength
                  , floorN
                  , padIn, padOut
                  , groupsOf
+                 , fromDir
                  ) where
+
+import Brick.Types (Direction(Up, Down))
+
+fromDir :: Direction -> Int
+fromDir Up = -1
+fromDir Down = 1
 
 -- character length of hex representation of number
 hexLength :: Int -> Int

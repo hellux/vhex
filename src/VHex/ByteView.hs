@@ -56,7 +56,7 @@ createByteView s r = ByteView
     }
     where fw = fromWordShowS s
           dw = (length . fw) 0
-          sw = if dw <= 1 then 0 else 1 
+          sw = if dw <= 1 then 0 else 1
 
 binary :: ByteView
 binary = createByteView (showIntAtBase 2 intToDigit)
