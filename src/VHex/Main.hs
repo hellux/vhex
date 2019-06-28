@@ -342,7 +342,7 @@ executeCmd :: String -> Model -> EventM Name (Next Model)
 executeCmd "write" m = liftIO (saveFile m') >>= continue
     where m' = m { mode = NormalMode $ CmdNone Nothing }
 executeCmd "quit" m = halt m
-executeCmd "w" m = m & executeCmd "w"
+executeCmd "w" m = m & executeCmd "write"
 executeCmd "q" m = executeCmd "quit" m
 executeCmd cmd m = m & errorMsg ("Invalid command: " ++ cmd) & continue
 
