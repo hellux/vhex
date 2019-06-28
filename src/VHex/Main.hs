@@ -201,9 +201,9 @@ saveFile m = do
     case res of
         Left err -> m & errorMsg (show err) & return
         Right _ -> m { fileContents = contents }
-                    & infoMsg (show path ++ " written")
+                    & infoMsg
+                        (show path ++ " " ++ show (bufLen m) ++ "B written")
                     & return
-    return m
 
 viewportSize :: EventM Name (Int, Int)
 viewportSize = do
@@ -311,12 +311,11 @@ infoMsg :: String -> Model -> Model
 infoMsg msg m = m { mode = NormalMode $ CmdNone $ Just $ Right msg }
 
 executeCmd :: String -> Model -> EventM Name (Next Model)
-executeCmd "write" m = liftIO (saveFile m') >>= continue
-    where m' = m { mode = NormalMode $ CmdNone Nothing }
-executeCmd "quit" m = halt m
-executeCmd "w" m = m & executeCmd "write"
-executeCmd "q" m = executeCmd "quit" m
-executeCmd cmd m = m & errorMsg ("Invalid command: " ++ cmd) & continue
+executeCmd "write" = saveFile >>> liftIO >=> continue
+executeCmd "quit" = halt
+executeCmd "w" = executeCmd "write"
+executeCmd "q" = executeCmd "quit"
+executeCmd cmd = errorMsg ("Invalid command: " ++ cmd) >>> continue
 
 updateExCmd :: Model -> Event -> Editor String Name -> EventM Name (Next Model)
 updateExCmd m vtye cmdLine =
