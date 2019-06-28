@@ -52,7 +52,7 @@ slice start count buf = case selected moved of
     where moved = moveTo start buf
 
 contents :: ByteZipper -> ByteString
-contents buf = slice 0 (length buf - 1) buf
+contents buf = slice 0 (length buf) buf
 
 null :: ByteZipper -> Bool
 null buf = length buf == 0
