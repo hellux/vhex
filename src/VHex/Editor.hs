@@ -1,7 +1,4 @@
-module VHex.Editor ( curHori, curVert
-                   , normalMode, inputMode
-                   , viewEditor
-                   ) where
+module VHex.Editor (normalMode, inputMode, viewEditor) where
 
 import Numeric (showHex)
 
@@ -44,8 +41,8 @@ bytesPerRow l w byteCount = max 1 $ floorN bytesPerRowMultiple maxBytes where
     padding = length l - 1
     maxBytes = div (w - offsetWidth - padding) linWidth
 
-viewportSize :: EventM Name (Int, Int)
-viewportSize = do
+editorSize :: EventM Name (Int, Int)
+editorSize = do
     extent <- lookupExtent EditorViewPort
     case extent of
         Nothing -> return (0, 0)
@@ -58,7 +55,7 @@ focusPrev :: Model -> Model
 focusPrev m = m { cursorFocus = mod (cursorFocus m - 1) (length $ layout m) }
 
 scroll :: Direction -> Model -> EventM Name Model
-scroll dir m = viewportSize >>= scroll' >>= keepCursor where
+scroll dir m = editorSize >>= scroll' >>= keepCursor where
     scroll' (w, _) = return
         m { scrollPos = let perRow = bytesPerRow (layout m) w (bufLen m)
                             prev = scrollPos m
@@ -66,7 +63,7 @@ scroll dir m = viewportSize >>= scroll' >>= keepCursor where
                         in BU.clamp 0 maxPos (prev + fromDir dir*perRow) }
 
 scrollHalfPage :: Direction -> Model -> EventM Name Model
-scrollHalfPage dir m = viewportSize >>= scrollHalfPage' >>= followCursor where
+scrollHalfPage dir m = editorSize >>= scrollHalfPage' >>= followCursor where
     scrollHalfPage' (w, h) =
         m { scrollPos = let prev = scrollPos m
                             maxPos = floorN perRow (bufLen m - 1)
@@ -79,7 +76,7 @@ scrollHalfPage dir m = viewportSize >>= scrollHalfPage' >>= followCursor where
 
 -- keep cursor in view when scrolling
 keepCursor :: Model -> EventM Name Model
-keepCursor m = viewportSize >>= keepCursor' where
+keepCursor m = editorSize >>= keepCursor' where
     keepCursor' (w, h) = let perRow = bytesPerRow (layout m) w (bufLen m)
                              curRow = div (cursorPos m - scrollPos m) perRow
                              newRow = BU.clamp scrollOff (h-scrollOff-1) curRow
@@ -94,13 +91,13 @@ goToTop :: Model -> EventM Name Model
 goToTop = moveTo 0 >>> followCursor
 
 curBeginning :: Model -> EventM Name Model
-curBeginning m = viewportSize >>= curBeginning' where
+curBeginning m = editorSize >>= curBeginning' where
     curBeginning' (w, _) = let perRow = bytesPerRow (layout m) w (bufLen m)
                                newPos = floorN perRow (cursorPos m)
                            in return $ moveTo newPos m
 
 curEnd :: Model -> EventM Name Model
-curEnd m = viewportSize >>= curEnd' where
+curEnd m = editorSize >>= curEnd' where
     curEnd' (w, _) = let perRow = bytesPerRow (layout m) w (bufLen m)
                          lineEnd = floorN perRow (cursorPos m) + perRow - 1
                          newPos = min lineEnd (bufLen m - 1)
@@ -108,7 +105,7 @@ curEnd m = viewportSize >>= curEnd' where
 
 -- ensure cursor is always visible when scrolling
 followCursor :: Model -> EventM Name Model
-followCursor m = viewportSize >>= followCursor' where
+followCursor m = editorSize >>= followCursor' where
     followCursor' (w, h) =
         let perRow = bytesPerRow (layout m) w (bufLen m)
             bottomMargin = bufLen m-1-perRow*(h-1)
@@ -129,7 +126,7 @@ curHori dir m = m & moveTo newPos & followCursor
           newPos = BU.clamp 0 maxPos (cursorPos m + d)
 
 curVert :: Direction -> Model -> EventM Name Model
-curVert dir m = viewportSize >>= curVert' >>= followCursor where
+curVert dir m = editorSize >>= curVert' >>= followCursor where
     curVert' (w, _) = let d = fromDir dir
                           step = bytesPerRow (layout m) w (bufLen m)
                           newPos = min (bufLen m - 1)
