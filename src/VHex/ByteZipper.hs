@@ -24,9 +24,9 @@ data ByteZipper = ByteZipper { prev :: ByteString
                      }
 
 instance Show ByteZipper where
-    show buf = fromBS (prev buf) ++ sel ++ fromBS (next buf) where
-        fromBS bs = intersperse ' ' $ concatMap show $ B.unpack bs
-        sel = " [" ++ maybe " " show (selected buf) ++ "] "
+    show bz = fromBS (prev bz) ++ sel ++ fromBS (next bz)
+        where fromBS bs = intersperse ' ' $ concatMap show $ B.unpack bs
+              sel = " [" ++ maybe " " show (selected bz) ++ "] "
 
 -- constructing
 
@@ -46,82 +46,82 @@ byteZipper bs
 -- accessing / querying
 
 slice :: Int -> Int -> ByteZipper -> ByteString
-slice start count buf = case selected moved of
+slice start count bz = case selected moved of
     Nothing -> B.empty
     Just v -> B.cons v $ B.take (fromIntegral count-1) (next moved)
-    where moved = moveTo start buf
+    where moved = moveTo start bz
 
 contents :: ByteZipper -> ByteString
-contents buf = slice 0 (length buf) buf
+contents bz = slice 0 (length bz) bz
 
 null :: ByteZipper -> Bool
-null buf = length buf == 0
+null bz = length bz == 0
 
 -- cursor modification
 
 move :: Int -> ByteZipper -> ByteZipper
-move d buf
-    | fromIntegral d < -B.length (prev buf) =
+move d bz
+    | fromIntegral d < -B.length (prev bz) =
         error "move: exceeding lower bounds:"
-    | fromIntegral d > B.length (next buf) + 1 =
+    | fromIntegral d > B.length (next bz) + 1 =
         error "move: exceeding upper bounds"
-    | d < 0 = buf
-        { prev = B.drop n (prev buf)
-        , selected = Just $ B.index (prev buf) (n-1)
+    | d < 0 = bz
+        { prev = B.drop n (prev bz)
+        , selected = Just $ B.index (prev bz) (n-1)
         , location = i+d
-        , next = let beg = B.reverse (B.take (n-1) (prev buf))
-                 in beg `B.append` sel `B.append` next buf
+        , next = let beg = B.reverse (B.take (n-1) (prev bz))
+                 in beg `B.append` sel `B.append` next bz
         }
-    | d > 0 = buf
-        { prev = let beg = B.reverse (B.take (n-1) (next buf))
-                 in beg `B.append` sel `B.append` prev buf
-        , selected = if (i+d) == length buf
+    | d > 0 = bz
+        { prev = let beg = B.reverse (B.take (n-1) (next bz))
+                 in beg `B.append` sel `B.append` prev bz
+        , selected = if (i+d) == length bz
                         then Nothing
-                        else Just (B.index (next buf) (n-1))
+                        else Just (B.index (next bz) (n-1))
         , location = i+d
-        , next = B.drop n (next buf)
+        , next = B.drop n (next bz)
         }
-    | otherwise = buf
+    | otherwise = bz
     where
-        sel = case selected buf of
+        sel = case selected bz of
                 Nothing -> B.empty
                 Just w -> B.singleton w
-        i = location buf
+        i = location bz
         n = fromIntegral $ abs d
 
 moveTo :: Int -> ByteZipper -> ByteZipper
-moveTo i buf = move (i-location buf) buf
+moveTo i bz = move (i-location bz) bz
 
 -- modifiation of contents
 
 insert :: Word8 -> ByteZipper -> ByteZipper
-insert w buf = case selected buf of
-    Nothing -> if location buf == length buf
-                then buf { selected = Just w
-                         , location = length buf
-                         , length = length buf + 1
-                         }
+insert w bz = case selected bz of
+    Nothing -> if location bz == length bz
+                then bz { selected = Just w
+                        , location = length bz
+                        , length = length bz + 1
+                        }
                 else error "insert out of bounds"
-    Just v -> buf { selected = Just w
-                  , length = length buf + 1
-                  , next = B.cons v (next buf)
-                  }
+    Just v -> bz { selected = Just w
+                 , length = length bz + 1
+                 , next = B.cons v (next bz)
+                 }
 
 replace :: Word8 -> ByteZipper -> ByteZipper
-replace w buf
-    | null buf = insert w buf
-    | isNothing (selected buf) = insert w buf
-    | otherwise = buf { selected = Just w }
+replace w bz
+    | null bz = insert w bz
+    | isNothing (selected bz) = insert w bz
+    | otherwise = bz { selected = Just w }
 
 remove :: ByteZipper -> ByteZipper
-remove buf
-    | isNothing (selected buf) = buf
-    | not $ B.null (next buf) = buf { selected = Just $ B.head (next buf)
-                                    , length = length buf - 1
-                                    , next = B.tail (next buf)
-                                    }
-    | not $ B.null (prev buf) = buf { selected = Nothing
-                                    , length = length buf - 1
-                                    }
-    | not $ null buf = empty
+remove bz
+    | isNothing (selected bz) = bz
+    | not $ B.null (next bz) = bz { selected = Just $ B.head (next bz)
+                                  , length = length bz - 1
+                                  , next = B.tail (next bz)
+                                  }
+    | not $ B.null (prev bz) = bz { selected = Nothing
+                                  , length = length bz - 1
+                                  }
+    | not $ null bz = empty
     | otherwise = error "empty bytezipper"
