@@ -23,6 +23,7 @@ library
                     VHex.StatusLine
                     VHex.Command
                     VHex.ByteZipper
+                    VHex.ListZipper
                     VHex.ByteView
                     VHex.Types
                     VHex.Util

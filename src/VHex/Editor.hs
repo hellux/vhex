@@ -29,6 +29,7 @@ import Brick.Widgets.Edit (editor)
 
 import VHex.ByteView (ByteView, fromWord, toWord, spaceWidth, displayWidth)
 import qualified VHex.ByteZipper as BZ
+import qualified VHex.ListZipper as LZ
 import VHex.Types
 import VHex.Util (fromDir, floorN, hexLength, groupsOf, padOut)
 import VHex.Config
@@ -177,7 +178,7 @@ normalMode vtye = case vtye of
     _ -> return
 
 enterCmdLine :: Model -> Model
-enterCmdLine m = m { mode = NormalMode $ CmdEx (editor CmdLine (Just 1) "") }
+enterCmdLine m = m { mode = NormalMode $ CmdEx LZ.empty }
 
 enterInputMode :: InsMode -> Model -> Model
 enterInputMode im m

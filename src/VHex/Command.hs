@@ -8,6 +8,7 @@ import Control.Category ((>>>))
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (try, IOException)
 
+import Data.List (isPrefixOf)
 import qualified Data.ByteString as B
 
 import Lens.Micro ((&))
@@ -16,14 +17,10 @@ import Graphics.Vty.Input.Events (Event(..), Key(..))
 
 import Brick.Main (continue, halt)
 import Brick.Types
-import Brick.Widgets.Core ((<+>), withAttr, str)
-import Brick.Widgets.Edit (getEditContents
-                          , Editor
-                          , renderEditor
-                          , handleEditorEvent
-                          )
+import Brick.Widgets.Core (showCursor, (<+>), withAttr, str)
 
 import qualified VHex.ByteZipper as BZ
+import qualified VHex.ListZipper as LZ
 import VHex.Types
 import VHex.Attributes
 
@@ -48,6 +45,9 @@ aliases :: [(String, String)]
 aliases = [ ("w", "write")
           , ("q", "quit")
           ]
+
+matches :: String -> [String]
+matches line = filter (isPrefixOf line) $ map fst commands
 
 openFile :: FilePath -> Model -> IO Model
 openFile path m = do
@@ -90,16 +90,33 @@ executeCmd (cmd:args) = case cmdValue of
                         Just cmd' -> cmd'
           cmdValue = lookup cmdFull commands
 
-updateCmd :: Model -> Event -> Editor String Name -> EventM Name (Next Model)
-updateCmd m vtye cmdLine =
-    case vtye of
-        EvKey KEsc   [] -> m & emptyMsg & continue
-        EvKey KEnter [] -> case getEditContents cmdLine of
-                            (line:[]) -> m & executeCmd (words line)
-                            _ -> m & continue
-        _ -> do
-            cmdLine' <- handleEditorEvent vtye cmdLine
-            continue m { mode = NormalMode $ CmdEx cmdLine' }
+setLine :: String -> Model -> Model
+setLine line m = case mode m of
+    NormalMode (CmdEx _) ->
+        m { mode = NormalMode (CmdEx (LZ.fromList line)) }
+    _ -> m
+
+tabComplete :: String -> Model -> Model
+tabComplete line = case matches line of
+    [match] -> setLine match
+    _ -> id
+
+updateCmdLine :: CmdLine -> Event -> CmdLine
+updateCmdLine cl vtye = case vtye of
+    EvKey KLeft     [] -> cl & LZ.left
+    EvKey KRight    [] -> cl & LZ.right
+    EvKey KBS       [] -> cl & LZ.pop
+    EvKey (KChar c) [] -> cl & LZ.push c
+    _ -> cl
+
+updateCmd :: Model -> Event -> CmdLine -> EventM Name (Next Model)
+updateCmd m vtye cmdLine = case vtye of
+    EvKey KEsc         [] -> m & emptyMsg & continue
+    EvKey KEnter       [] -> m & executeCmd (words line)
+    EvKey (KChar '\t') [] -> m & tabComplete line & continue
+    _ -> continue m { mode = NormalMode $ CmdEx (updateCmdLine cmdLine vtye) }
+    where line = LZ.toList cmdLine
+
 
 viewCmdLine :: Model -> Widget Name
 viewCmdLine m = case mode m of
@@ -109,7 +126,10 @@ viewCmdLine m = case mode m of
             withAttr attrError (str err) <+> withAttr attrDef (str " ")
         CmdNone (Just (Right info)) ->
             withAttr attrDef (str info)
-        CmdEx cmdLine -> str ":" <+> renderEditor (str . head) True cmdLine
+        CmdEx cmdLine ->
+            let i = LZ.position cmdLine + 1
+            in showCursor Cursor (Location (i,0))
+                $ str (":" ++ LZ.toList cmdLine)
     InputMode im _ _ -> case im of
         ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
         InsertMode -> withAttr attrMode $ str "-- INSERT --"

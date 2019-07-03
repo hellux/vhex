@@ -2,7 +2,7 @@ module VHex.Types
 ( Model(..)
 , Mode(..)
 , Input(..), InsMode(..)
-, CmdLineMode(..)
+, CmdLine, CmdLineMode(..)
 , Name(..)
 , bvFocused, bufNull, bufLen, cursorPos, cursorVal
 , moveTo, move, replace, insert, remove
@@ -12,9 +12,8 @@ module VHex.Types
 import Data.Word (Word8)
 import Data.ByteString
 
-import Brick.Widgets.Edit (Editor)
-
 import VHex.ByteZipper (ByteZipper)
+import VHex.ListZipper (ListZipper)
 import qualified VHex.ByteZipper as BZ
 import VHex.ByteView (ByteView)
 
@@ -23,12 +22,15 @@ data Name = EditorViewPort
           | Cursor
           deriving (Show, Eq, Ord)
 
+type CmdLine = ListZipper Char
 data CmdLineMode = CmdNone
                     (Maybe
                         (Either
                             String   -- error message
                             String)) -- info message
-                 | CmdEx (Editor String Name)
+                 | CmdEx
+                    CmdLine
+                    --(Maybe (ListZipper String)) -- tab complete suggestions
                  deriving (Show)
 
 data Input = Input
