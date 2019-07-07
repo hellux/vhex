@@ -12,7 +12,7 @@ import Data.Maybe (fromMaybe)
 import Data.List (isPrefixOf)
 import qualified Data.ByteString as B
 
-import Lens.Micro ((&))
+import Lens.Micro
 
 import Graphics.Vty.Input.Events (Event(..), Key(..))
 
@@ -25,16 +25,16 @@ import qualified VHex.ListZipper as LZ
 import VHex.Types
 import VHex.Attributes
 
-type Command = [String] -> Model -> EventM Name (Next Model)
+type Command = [String] -> EditorState -> EventM Name (Next EditorState)
 type ArgCount = Int -> Bool
 
 cmdQuit :: Command
 cmdQuit _ = halt
 
 cmdWrite :: Command
-cmdWrite args m = m & saveFile path & liftIO >>= continue
+cmdWrite args es = es & saveFile path & liftIO >>= continue
     where path = case args of
-                    [] -> filePath m
+                    [] -> fromMaybe "" (esFilePath es)
                     path' -> unwords path'
 
 commands :: [(String, (Command, ArgCount))]
@@ -50,35 +50,38 @@ aliases = [ ("w", "write")
 matches :: String -> [String]
 matches line = filter (isPrefixOf line) $ map fst commands
 
-openFile :: FilePath -> Model -> IO Model
-openFile path m = do
+openFile :: FilePath -> EditorState -> IO EditorState
+openFile path es = do
     contents <- B.readFile path
-    return m { filePath = path
-             , fileContents = contents
-             , buffer = BZ.byteZipper contents
-             }
+    return $ es & esFilePathL .~ Just path
+                & esWindowL.wsBufferL .~ BZ.byteZipper contents
 
-saveFile:: String -> Model -> IO Model
-saveFile path m = do
-    let contents = BZ.contents (buffer m)
+saveFile:: String -> EditorState -> IO EditorState
+saveFile path es = do
+    let contents = BZ.contents (es^.esWindowL.wsBufferL)
     res <- try $ B.writeFile path contents :: IO (Either IOException ())
     case res of
-        Left err -> m & errorMsg (show err) & return
-        Right _ -> m { fileContents = contents }
-                    & infoMsg
-                        (show path ++ " " ++ show (bufLen m) ++ "B written")
-                    & return
+        Left err -> es & errorMsg (show err) & return
+        Right _ -> es & infoMsg
+                        (show path ++ " " ++
+                         show (BZ.length $ es^.esWindowL.wsBufferL) ++
+                         "B written")
+                      & return
 
-emptyMsg :: Model -> Model
-emptyMsg m = m { mode = NormalMode $ CmdNone Nothing }
+emptyMsg :: EditorState -> EditorState
+emptyMsg = esModeL .~ (NormalMode $ CmdNone Nothing)
 
-infoMsg :: String -> Model -> Model
-infoMsg msg m = m { mode = NormalMode $ CmdNone $ Just $ Right msg }
+msg :: MsgType -> String -> EditorState -> EditorState
+msg t m = esModeL .~ (NormalMode $ CmdNone $ Just msgState) where
+    msgState = MsgState { msgType = t, msgContents = m }
 
-errorMsg :: String -> Model -> Model
-errorMsg msg m = m { mode = NormalMode $ CmdNone $ Just $ Left msg }
+infoMsg :: String -> EditorState -> EditorState
+infoMsg = msg InfoMsg
 
-executeCmd :: [String] -> Model -> EventM Name (Next Model)
+errorMsg :: String -> EditorState -> EditorState
+errorMsg = msg ErrorMsg
+
+executeCmd :: [String] -> EditorState -> EventM Name (Next EditorState)
 executeCmd [] = emptyMsg >>> continue
 executeCmd (cmd:args) = case cmdValue of
     Nothing -> errorMsg ("Invalid command: " ++ cmd) >>> continue
@@ -86,16 +89,16 @@ executeCmd (cmd:args) = case cmdValue of
         | argCount (length args) -> func args
         | otherwise -> errorMsg ("Invalid number of arguments: "
                                 ++ show (length args)) >>> continue
-    where cmdFull = fromMaybe cmd $ lookup cmd alias
+    where cmdFull = fromMaybe cmd $ lookup cmd aliases
           cmdValue = lookup cmdFull commands
 
-setLine :: String -> Model -> Model
-setLine line m = case mode m of
+setLine :: String -> EditorState -> EditorState
+setLine line es = case esMode es of
     NormalMode (CmdEx _) ->
-        m { mode = NormalMode (CmdEx (LZ.fromList line)) }
-    _ -> m
+        es { esMode = NormalMode (CmdEx (LZ.fromList line)) }
+    _ -> es
 
-tabComplete :: String -> Model -> Model
+tabComplete :: String -> EditorState -> EditorState
 tabComplete line = case matches line of
     [match] -> setLine match
     _ -> id
@@ -108,27 +111,29 @@ updateCmdLine cl vtye = case vtye of
     EvKey (KChar c) [] -> cl & LZ.push c
     _ -> cl
 
-updateCmd :: Model -> Event -> CmdLine -> EventM Name (Next Model)
-updateCmd m vtye cmdLine = case vtye of
-    EvKey KEsc         [] -> m & emptyMsg & continue
-    EvKey KEnter       [] -> m & executeCmd (words line)
-    EvKey (KChar '\t') [] -> m & tabComplete line & continue
-    _ -> continue m { mode = NormalMode $ CmdEx (updateCmdLine cmdLine vtye) }
+updateCmd :: EditorState -> Event -> CmdLine -> EventM Name (Next EditorState)
+updateCmd es vtye cmdLine = case vtye of
+    EvKey KEsc         [] -> es & emptyMsg & continue
+    EvKey KEnter       [] -> es & executeCmd (words line)
+    EvKey (KChar '\t') [] -> es & tabComplete line & continue
+    _ -> continue es { esMode = NormalMode $ CmdEx (updateCmdLine cmdLine vtye) }
     where line = LZ.toList cmdLine
 
 
-viewCmdLine :: Model -> Widget Name
-viewCmdLine m = case mode m of
+viewCmdLine :: EditorState -> Widget Name
+viewCmdLine es = case esMode es of
     NormalMode cm -> case cm of
         CmdNone Nothing -> str " "
-        CmdNone (Just (Left err)) ->
-            withAttr attrError (str err) <+> withAttr attrDef (str " ")
-        CmdNone (Just (Right info)) ->
-            withAttr attrDef (str info)
+        CmdNone (Just msg) ->
+            let attr = case msgType msg of
+                        InfoMsg -> attrDef
+                        ErrorMsg -> attrError
+            in withAttr attr (str $ msgContents msg) <+>
+               withAttr attrDef (str " ")
         CmdEx cmdLine ->
             let i = LZ.position cmdLine + 1
-            in showCursor Cursor (Location (i,0))
+            in showCursor CmdCursor (Location (i,0))
                 $ str (":" ++ LZ.toList cmdLine)
-    InputMode im _ _ -> case im of
+    InputMode is -> case isMode is of
         ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
         InsertMode -> withAttr attrMode $ str "-- INSERT --"

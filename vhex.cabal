@@ -20,6 +20,8 @@ library
   default-language: Haskell2010
   exposed-modules:  VHex.Main
   other-modules:    VHex.Editor
+                    VHex.State.Buffer
+                    VHex.State.Input
                     VHex.StatusLine
                     VHex.Command
                     VHex.ByteZipper

@@ -1,91 +1,131 @@
+--{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TemplateHaskell #-}
+
 module VHex.Types
-( Model(..)
+( Name(..)
+, Layout
+, CmdLine
+
+, EditorState(..)
+, esModeL, esWindowL, esFilePathL
+
+, WindowState(..)
+, wsBufferL, wsLayoutL, wsScrollPosL
+
 , Mode(..)
-, Input(..), InsMode(..)
-, CmdLine, CmdLineMode(..)
-, Name(..)
-, bvFocused, bufNull, bufLen, cursorPos, cursorVal
-, moveTo, move, replace, insert, remove
+, CmdLineMode(..)
+, MsgType(..)
+, MsgState(..)
+
+, InsMode(..)
+, InputState(..)
+, isModeL, isInputL, isNewByteL
 ) where
 
+{-
+import Control.Monad.State ( MonadState, StateT
+                           , liftIO
+                           , get, put
+                           , runStateT
+                           )
+import Control.Monad.IO.Class (MonadIO)
+-}
 
-import Data.Word (Word8)
-import Data.ByteString
+import Brick.Types (Next, EventM, suffixLenses)
+import qualified Brick.Main as Brick
 
-import VHex.ByteZipper (ByteZipper)
-import VHex.ListZipper (ListZipper)
-import qualified VHex.ByteZipper as BZ
 import VHex.ByteView (ByteView)
+import VHex.ByteZipper (ByteZipper)
+import qualified VHex.ByteZipper as BZ
+import VHex.ListZipper (ListZipper)
+import qualified VHex.ListZipper as LZ
 
-data Name = EditorViewPort
-          | CmdLine
-          | Cursor
-          deriving (Show, Eq, Ord)
+data Name = EditorWindow
+          | CmdCursor
+          deriving (Eq, Ord)
 
+type Layout = ListZipper ByteView
 type CmdLine = ListZipper Char
-data CmdLineMode = CmdNone
-                    (Maybe
-                        (Either
-                            String   -- error message
-                            String)) -- info message
-                 | CmdEx
-                    CmdLine
-                    --(Maybe (ListZipper String)) -- tab complete suggestions
-                 deriving (Show)
 
-data Input = Input
-                String  -- string representation of byte
-                Int     -- cursor position on selected byte
-            deriving (Show)
-data InsMode = ReplaceMode
-             | InsertMode
-             deriving (Eq, Show)
+data MsgType = InfoMsg | ErrorMsg
 
-data Mode = NormalMode CmdLineMode
-          | InputMode
-                InsMode
-                Input
-                Bool -- entered new byte
-
-data Model = Model
-    { filePath :: FilePath
-    , fileContents :: ByteString
-    , buffer :: ByteZipper
-    , layout :: [ByteView]
-    , cursorFocus :: Int            -- focused view by index
-    , scrollPos :: Int              -- offset to visible top left byte
-    , mode :: Mode
+data MsgState = MsgState
+    { msgType :: MsgType 
+    , msgContents :: String
     }
 
-bvFocused :: Model -> ByteView
-bvFocused m = layout m !! cursorFocus m
+data CmdLineMode = CmdNone (Maybe MsgState)
+                 | CmdEx CmdLine
 
-bufNull :: Model -> Bool
-bufNull = BZ.null . buffer
+data InsMode = InsertMode | ReplaceMode
 
-bufLen :: Model -> Int
-bufLen = BZ.length . buffer
+data InputState = InputState
+    { isMode :: InsMode
+    -- ^ Input mode.
+    , isInput :: ListZipper Char
+    -- ^ Input contents and cursor
+    , isNewByte :: Bool
+    -- ^ Entered new byte.
+    }
+suffixLenses ''InputState
 
-cursorPos :: Model -> Int
-cursorPos = BZ.location . buffer
+data Mode = NormalMode CmdLineMode
+          | InputMode InputState
 
-cursorVal :: Model -> Maybe Word8
-cursorVal = BZ.selected . buffer
+data WindowState = WindowState
+    { wsBuffer :: ByteZipper
+    -- ^ Contents of opened file, potentially edited.
+    , wsLayout :: Layout
+    -- ^ Selection and ordering of byteviews.
+    , wsScrollPos :: Int
+    -- ^ Offset to first visible byte.
+    }
+suffixLenses ''WindowState
 
-moveTo :: Int -> Model -> Model
-moveTo i m = let i' = min (max 0 (bufLen m)) i
-             in m { buffer = BZ.moveTo i' (buffer m) }
+data EditorState = EditorState
+    { esMode :: Mode
+    -- ^ Current editor mode.
+    , esWindow :: WindowState
+    -- ^ State of window for viewing and editing file.
+    , esFilePath :: Maybe FilePath
+    -- ^ Path to opened file, if any.
+    }
+suffixLenses ''EditorState
 
-move :: Int -> Model -> Model
-move n m = moveTo (cursorPos m+n) m
+{-
+newtype VHexM a =
+    VHexM { fromVHexM :: (StateT VHState (EventM Name) a) }
 
-replace :: Word8 -> Model -> Model
-replace w m = m { buffer = BZ.replace w (buffer m) }
+instance Functor VHexM where
+    fmap f (VHexM x) = VHexM (fmap f x)
 
-insert :: Word8 -> Model -> Model
-insert w m = m { buffer = BZ.insert w (buffer m) }
+instance Applicative VHexM where
+    pure x = VHexM (pure x)
+    VHexM f <*> VHexM x = VHexM (f <*> x)
 
-remove :: Model -> Model
-remove m = if bufNull m
-    then m
-    else m { buffer = BZ.remove (buffer m) }
+instance Monad VHexM where
+    return x = VHexM (return x)
+    VHexM x >>= f = VHexM (x >>= \ x' -> fromVHexM (f x'))
+
+instance MonadState EditorState VHexM where
+    get = vhCurrentState `fmap` VHexM get
+    put st = VHexM $ do
+        s <- get
+        put $ s { vhCurrentState = st }
+
+instance MonadIO VHexM where
+    liftIO = VHexM . liftIO
+
+data VHState =
+    VHState { vhCurrentState :: EditorState
+            , vhNextAction :: EditorState -> EventM Name (Next EditorState)
+            }
+
+runVHEvent :: EditorState -> VHexM () -> EventM Name (Next EditorState)
+runVHEvent esPrev (VHexM st) = do
+    let vhSt = VHState { vhCurrentState = esPrev
+                       , vhNextAction = Brick.continue
+                       }
+    ((), esNext) <- runStateT st vhSt
+    (vhNextAction esNext) (vhCurrentState esNext)
+-}

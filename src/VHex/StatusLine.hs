@@ -1,10 +1,15 @@
 module VHex.StatusLine (viewStatusLine) where
 
-import VHex.Types
-import VHex.Attributes (attrStatusLine)
+import Data.Maybe (fromMaybe)
+
+import Lens.Micro
 
 import Brick.Types (Widget, Padding(Max))
 import Brick.Widgets.Core (withAttr, str, padRight, hLimitPercent, hBox)
+
+import VHex.Types
+import VHex.Attributes (attrStatusLine)
+import qualified VHex.ByteZipper as BZ
 
 -- TODO more accurate percentage using dimensions of editor
 scrollPercentage :: Int -> Int -> String
@@ -14,9 +19,9 @@ scrollPercentage scroll len = show p ++ "%" where
     p = round $ (*100) $ (fromIntegral scroll :: Double) /
                          (fromIntegral len :: Double)
 
-viewStatusLine :: Model -> Widget Name
-viewStatusLine m = withAttr attrStatusLine $ hBox
-    [ hLimitPercent 85 $ padRight Max $ str $ filePath m
-    , padRight Max $ str $ show (cursorPos m)
-    , str $ scrollPercentage (scrollPos m) (bufLen m)
+viewStatusLine :: EditorState -> Widget Name
+viewStatusLine es = withAttr attrStatusLine $ hBox
+    [ hLimitPercent 85 $ padRight Max $ str $ fromMaybe "" $ esFilePath es
+    , padRight Max $ str $ show (BZ.location $ es^.esWindowL.wsBufferL)
+    , str $ scrollPercentage (es^.esWindowL.wsScrollPosL) (BZ.length $ es^.esWindowL.wsBufferL)
     ]

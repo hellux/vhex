@@ -9,36 +9,38 @@ import Brick.Types
 import Brick.Widgets.Core
 
 import qualified VHex.ByteZipper as BZ
+import qualified VHex.ListZipper as LZ
 import qualified VHex.ByteView as BV
-import VHex.Types (Model(..), Mode(..), CmdLineMode(..), Name)
+import VHex.Types
 import VHex.Editor (normalMode, inputMode, viewEditor)
 import VHex.StatusLine (viewStatusLine)
 import VHex.Command (updateCmd, viewCmdLine, openFile)
 import VHex.Attributes (attributes)
 
-initialModel :: Model
-initialModel = Model
-    { filePath = ""
-    , fileContents = B.empty
-    , buffer = BZ.empty
-    , layout = [ BV.hex, BV.ascii1 ]
-    , cursorFocus = 0
-    , scrollPos = 0
-    , mode = NormalMode (CmdNone Nothing)
+initialState :: EditorState
+initialState = EditorState
+    { esMode = NormalMode (CmdNone Nothing)
+    , esWindow = WindowState
+        { wsBuffer = BZ.empty
+        , wsLayout = LZ.fromList [ BV.hex, BV.ascii1 ]
+        , wsScrollPos = 0
+        }
+    , esFilePath = Nothing
     }
 
-update :: Model -> BrickEvent Name e -> EventM Name (Next Model)
-update m (VtyEvent vtye) = case mode m of
+update :: EditorState -> BrickEvent Name e -> EventM Name (Next EditorState)
+update es (VtyEvent vtye) = case esMode es of
     NormalMode cm -> case cm of
-        CmdEx cmdLine -> updateCmd m vtye cmdLine
-        CmdNone _ -> normalMode vtye m >>= continue
-    InputMode im _ _ -> inputMode im vtye m >>= continue
-update m _ = continue m
+        CmdEx cmdLine -> updateCmd es vtye cmdLine
+        CmdNone _ -> continue es -- normalMode vtye m >>= continue
+    InputMode _ -> continue es -- inputMode im vtye m >>= continue
+update es _ = continue es
 
-view :: Model -> [Widget Name]
-view m = [ viewEditor m <=> viewStatusLine m <=> viewCmdLine m ]
+view :: EditorState -> [Widget Name]
+--view m = [ viewEditor m <=> viewStatusLine m <=> viewCmdLine m ]
+view m = [ viewStatusLine m <=> viewCmdLine m ]
 
-app :: App Model e Name
+app :: App EditorState e Name
 app = App { appDraw = view
           , appChooseCursor = showFirstCursor
           , appHandleEvent = update
@@ -49,8 +51,8 @@ app = App { appDraw = view
 vhex :: IO ()
 vhex = do
     args <- getArgs
-    model <- if not (null args)
-                then openFile (head args) initialModel
-                else return initialModel
-    _ <- defaultMain app model
+    state <- if not (null args)
+                then openFile (head args) initialState
+                else return initialState
+    _ <- defaultMain app state
     return ()
