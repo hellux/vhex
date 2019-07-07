@@ -8,6 +8,7 @@ import Control.Category ((>>>))
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (try, IOException)
 
+import Data.Maybe (fromMaybe)
 import Data.List (isPrefixOf)
 import qualified Data.ByteString as B
 
@@ -69,7 +70,7 @@ saveFile path m = do
                     & return
 
 emptyMsg :: Model -> Model
-emptyMsg m = m { mode = NormalMode $ CmdNone $ Nothing }
+emptyMsg m = m { mode = NormalMode $ CmdNone Nothing }
 
 infoMsg :: String -> Model -> Model
 infoMsg msg m = m { mode = NormalMode $ CmdNone $ Just $ Right msg }
@@ -85,9 +86,7 @@ executeCmd (cmd:args) = case cmdValue of
         | argCount (length args) -> func args
         | otherwise -> errorMsg ("Invalid number of arguments: "
                                 ++ show (length args)) >>> continue
-    where cmdFull = case lookup cmd aliases of
-                        Nothing -> cmd
-                        Just cmd' -> cmd'
+    where cmdFull = fromMaybe cmd $ lookup cmd alias
           cmdValue = lookup cmdFull commands
 
 setLine :: String -> Model -> Model
