@@ -44,7 +44,7 @@ data Name = EditorWindow
           | CmdCursor
           deriving (Eq, Ord)
 
-type Layout = ListZipper ByteView
+type Layout = TreeZipper ByteView
 type CmdLine = ListZipper Char
 
 data MsgType = InfoMsg | ErrorMsg
@@ -73,22 +73,21 @@ data Mode = NormalMode CmdLineMode
           | InputMode InputState
 
 data WindowState = WindowState
-    { wsBuffer :: ByteZipper
-    -- ^ Contents of opened file, potentially edited.
-    , wsLayout :: Layout
-    -- ^ Selection and ordering of byteviews.
+    { wsByteView
+    -- ^ Specify display and input of bytes.
     , wsScrollPos :: Int
     -- ^ Offset to first visible byte.
+    , wsFilePath :: Maybe FilePath
     }
 suffixLenses ''WindowState
 
 data EditorState = EditorState
     { esMode :: Mode
     -- ^ Current editor mode.
-    , esWindow :: WindowState
-    -- ^ State of window for viewing and editing file.
-    , esFilePath :: Maybe FilePath
-    -- ^ Path to opened file, if any.
+    , esBuffers :: Map FilePath ByteZipper
+    -- ^ Contents and cursors of opened files, potentially edited.
+    , esWindows :: Layout
+    -- ^ Windows, as well as their selection and ordering.
     }
 suffixLenses ''EditorState
 

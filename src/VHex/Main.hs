@@ -4,6 +4,10 @@ import System.Environment (getArgs)
 
 import qualified Data.ByteString as B
 
+import Lens.Micro
+
+import Graphics.Vty.Input.Events (Event(..), Key(..))
+
 import Brick.Main
 import Brick.Types
 import Brick.Widgets.Core
@@ -12,7 +16,7 @@ import qualified VHex.ByteZipper as BZ
 import qualified VHex.ListZipper as LZ
 import qualified VHex.ByteView as BV
 import VHex.Types
-import VHex.Editor (normalMode, inputMode, viewEditor)
+import VHex.Editor (updateWindow)
 import VHex.StatusLine (viewStatusLine)
 import VHex.Command (updateCmd, viewCmdLine, openFile)
 import VHex.Attributes (attributes)
@@ -32,7 +36,11 @@ update :: EditorState -> BrickEvent Name e -> EventM Name (Next EditorState)
 update es (VtyEvent vtye) = case esMode es of
     NormalMode cm -> case cm of
         CmdEx cmdLine -> updateCmd es vtye cmdLine
-        CmdNone _ -> continue es -- normalMode vtye m >>= continue
+        CmdNone _ -> case vtye of
+                        EvKey (KChar ':') [] -> es & esModeL .~ (NormalMode $ CmdEx $ LZ.fromList "") & continue
+                        _ -> do
+                            ws' <- updateWindow vtye (es^.esWindowL)
+                            continue $ es & esWindowL .~ ws'
     InputMode _ -> continue es -- inputMode im vtye m >>= continue
 update es _ = continue es
 

@@ -16,6 +16,8 @@ import Data.List (intersperse)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
+import Brick.Util (clamp)
+
 data ByteZipper = ByteZipper { prev :: ByteString
                      , selected :: Maybe Word8
                      , location :: Int
@@ -61,24 +63,20 @@ null bz = length bz == 0
 
 move :: Int -> ByteZipper -> ByteZipper
 move d bz
-    | fromIntegral d < -B.length (prev bz) =
-        error "move: exceeding lower bounds:"
-    | fromIntegral d > B.length (next bz) + 1 =
-        error "move: exceeding upper bounds"
-    | d < 0 = bz
+    | d' < 0 = bz
         { prev = B.drop n (prev bz)
         , selected = Just $ B.index (prev bz) (n-1)
-        , location = i+d
+        , location = i+d'
         , next = let beg = B.reverse (B.take (n-1) (prev bz))
                  in beg `B.append` sel `B.append` next bz
         }
-    | d > 0 = bz
+    | d' > 0 = bz
         { prev = let beg = B.reverse (B.take (n-1) (next bz))
                  in beg `B.append` sel `B.append` prev bz
-        , selected = if (i+d) == length bz
+        , selected = if (i+d') == length bz
                         then Nothing
                         else Just (B.index (next bz) (n-1))
-        , location = i+d
+        , location = i+d'
         , next = B.drop n (next bz)
         }
     | otherwise = bz
@@ -87,7 +85,11 @@ move d bz
                 Nothing -> B.empty
                 Just w -> B.singleton w
         i = location bz
-        n = fromIntegral $ abs d
+        d' :: Int
+        d' = clamp (fromIntegral $ -B.length (prev bz))
+                   (fromIntegral $  B.length (next bz) + 1)
+                   d
+        n = fromIntegral $ abs d'
 
 moveTo :: Int -> ByteZipper -> ByteZipper
 moveTo i bz = move (i-location bz) bz
@@ -101,7 +103,7 @@ insert w bz = case selected bz of
                         , location = length bz
                         , length = length bz + 1
                         }
-                else error "insert out of bounds"
+                else error "insert out of bounds, corrupted bz?"
     Just v -> bz { selected = Just w
                  , length = length bz + 1
                  , next = B.cons v (next bz)
@@ -123,5 +125,4 @@ remove bz
     | not $ B.null (prev bz) = bz { selected = Nothing
                                   , length = length bz - 1
                                   }
-    | not $ null bz = empty
-    | otherwise = error "empty bytezipper"
+    | otherwise = empty

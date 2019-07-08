@@ -78,6 +78,9 @@ fromBufferContext bc = (wsBufferL    .~ bc^.bcBufL)
 bcCursor :: BufferContext -> Int
 bcCursor = BZ.location . (^.bcBufL)
 
+bcMove :: Int -> BufferContext -> BufferContext
+bcMove d = bcBufL %~ BZ.move d
+
 bcMoveTo :: Int -> BufferContext -> BufferContext
 bcMoveTo pos = bcBufL %~ BZ.moveTo pos
 
@@ -97,5 +100,4 @@ followCursor bc = bc & bcMoveTo newPos where
     newPos = floorN (bc^.bcRowsL) newPos'
 
 curHori :: Direction -> BufferContext -> BufferContext
-curHori dir bc = bc & bcMoveTo newPos & followCursor
-    where newPos = clamp 0 (bcSize bc) (bcCursor bc + fromDir dir)
+curHori dir bc = bc & bcMove (fromDir dir)
