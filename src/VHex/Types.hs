@@ -6,6 +6,9 @@ module VHex.Types
 , Layout
 , CmdLine
 
+, VHexConfig(..)
+, cfgScrollOffL, cfgBytesPerRowMultipleL
+
 , EditorState(..)
 , esModeL, esWindowL, esFilePathL
 
@@ -42,9 +45,10 @@ import qualified VHex.ListZipper as LZ
 
 data Name = EditorWindow
           | CmdCursor
+          | InputCursor
           deriving (Eq, Ord)
 
-type Layout = TreeZipper ByteView
+type Layout = ListZipper ByteView
 type CmdLine = ListZipper Char
 
 data MsgType = InfoMsg | ErrorMsg
@@ -73,21 +77,30 @@ data Mode = NormalMode CmdLineMode
           | InputMode InputState
 
 data WindowState = WindowState
-    { wsByteView
-    -- ^ Specify display and input of bytes.
+    { wsBuffer :: ByteZipper
+    -- ^ Contents and cursor of (edited) opened file.
     , wsScrollPos :: Int
     -- ^ Offset to first visible byte.
-    , wsFilePath :: Maybe FilePath
+    , wsLayout :: Layout
+    -- ^ Specify layout of byte views
     }
 suffixLenses ''WindowState
+
+data VHexConfig = VHexConfig
+    { cfgScrollOff :: Int
+    , cfgBytesPerRowMultiple :: Int
+    }
+suffixLenses ''VHexConfig
 
 data EditorState = EditorState
     { esMode :: Mode
     -- ^ Current editor mode.
-    , esBuffers :: Map FilePath ByteZipper
-    -- ^ Contents and cursors of opened files, potentially edited.
-    , esWindows :: Layout
-    -- ^ Windows, as well as their selection and ordering.
+    , esWindow :: WindowState
+    -- ^ Editor window.
+    , esFilePath :: Maybe FilePath
+    -- ^ Path to opened file.
+    , esConfig :: VHexConfig
+    -- ^ User application options.
     }
 suffixLenses ''EditorState
 

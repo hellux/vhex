@@ -19,9 +19,9 @@ source-repository head
 library
   default-language: Haskell2010
   exposed-modules:  VHex.Main
-  other-modules:    VHex.Editor
-                    VHex.State.Buffer
-                    VHex.State.Input
+  other-modules:    VHex.Window
+                    VHex.Buffer
+                    VHex.Input
                     VHex.StatusLine
                     VHex.Command
                     VHex.ByteZipper
@@ -33,9 +33,11 @@ library
                     VHex.Config
   hs-source-dirs:   src
   build-depends:    base >=4.9 && <5
+                  , mtl
                   , bytestring
                   , vty
                   , microlens
+                  , microlens-mtl
                   , brick
   ghc-options:      -Wall -fno-warn-unused-do-bind -O3
 

@@ -16,7 +16,7 @@ import qualified VHex.ByteZipper as BZ
 import qualified VHex.ListZipper as LZ
 import qualified VHex.ByteView as BV
 import VHex.Types
-import VHex.Editor (updateWindow)
+import VHex.Window
 import VHex.StatusLine (viewStatusLine)
 import VHex.Command (updateCmd, viewCmdLine, openFile)
 import VHex.Attributes (attributes)
