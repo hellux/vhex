@@ -3,53 +3,75 @@ module VHex.WindowZipper
 , empty, singleton
 , modify
 , split
+, left, right, up, down
 ) where
 
-data Axis = None | Horizontal | Vertical deriving (Eq, Show)
-data Child a = ChildSplit (Split a)
-             | ChildLeaf a
+data Axis = Horizontal | Vertical deriving (Eq, Show)
+data Child w = ChildSplit [Child w]
+             | ChildLeaf w
              deriving (Show)
-data Split a = Split [Child a] -- previous children
-                     [Child a] -- next children
+data Parent w = Parent [Child w] -- previous children
+                       [Child w] -- next children
              deriving (Show)
-data WindowZipper a = Empty
-                    | Leaf 
-                        Axis
-                        [Split a] -- parent splits
-                        a         -- window in leaf
+data WindowZipper w = EmptyZ
+                    | SplitZ Axis [Parent w] [Child w]
+                    | LeafZ  Axis [Parent w] w
                     deriving (Show)
 
-empty :: WindowZipper a
-empty = Empty
+empty :: WindowZipper w
+empty = EmptyZ
 
-singleton :: a -> WindowZipper a
-singleton = Leaf None []
+singleton :: w -> WindowZipper w
+singleton = LeafZ Horizontal []
 
-modify :: (a -> a) -> WindowZipper a -> WindowZipper a
-modify f (Leaf ax above a) = Leaf ax above (f a)
+modify :: (w -> w) -> WindowZipper w -> WindowZipper w
+modify f (LeafZ ax above w) = LeafZ ax above (f w)
 modify _ wz = wz
 
-split :: Axis -> WindowZipper a -> WindowZipper a
-split axis (Leaf _ [] a) =
-    Leaf axis [Split [] [ChildLeaf a]] a
-split axis (Leaf ax (Split prev next:ss) a)
-    | axis == ax = Leaf axis ( Split prev (ChildLeaf a : next)
-                             : ss
-                             ) a
-    | otherwise  = Leaf axis ( Split [] [ChildLeaf a]
-                             : Split prev next
-                             : ss
-                             ) a
+split :: Axis -> WindowZipper w -> WindowZipper w
+split axis (LeafZ _ [] w) =
+    LeafZ axis [Parent [] [ChildLeaf w]] w
+split axis (LeafZ ax (Parent prev next:ss) w)
+    | axis == ax = LeafZ axis ( Parent prev (ChildLeaf w : next)
+                              : ss
+                              ) w
+    | otherwise  = LeafZ axis ( Parent [] [ChildLeaf w]
+                              : Parent prev next
+                              : ss
+                              ) w
 split _ tz = tz
 
-left :: WindowZipper a -> WindowZipper a
-left wz@(Leaf Horizontal (Split prev next:ss) a) = case prev of
-    (ChildLeaf b:ps) -> Leaf Horizontal (Split ps (ChildLeaf a:next):ss) b
-    _ -> wz
-left wz = wz
+nx -> Axis -> Axis
+nx Horizontal = Vertical
+nx Vertical = Horizontal
 
-right :: WindowZipper a -> WindowZipper a
-right wz@(Leaf Horizontal (Split prev next:ss) a) = case next of
-    (ChildLeaf b:ns) -> Leaf Horizontal (Split (ChildLeaf a:prev) ns:ss) b
-    _ -> wz
-right wz = wz
+selectPrev :: Axis -> WindowZipper w -> WindowZipper w
+selectPrev axis wz@(LeafZ ax (Parent prev@(sp:sps) next:ss) w)
+    | ax == axis = case prev of
+        (ChildLeaf v:ps) -> LeafZ axis newParents v
+        (ChildSplit cs:ps) -> selectPrev axis $ SplitZ (nx axis) newParents cs
+        [] -> case sp of -- TODO fix
+            ChildLeaf v -> Leaf (nx axis) newParents v
+            ChildSplit cs -> selectPrev $ SplitZ (nx axis) newParents cs
+        _ -> wz
+    where newParents = Parent sps (ChildLeaf w:next):ss
+selectPrev _ wz = wz
+
+selectNext :: Axis -> WindowZipper w -> WindowZipper w
+selectNext axis wz@(LeafZ ax (Parent prev next:ss) w)
+    | ax == axis = case next of
+        (ChildLeaf v:ns) -> LeafZ axis (Parent (ChildLeaf w:prev) ns:ss) v
+        _ -> wz
+selectNext _ wz = wz
+
+left :: WindowZipper w -> WindowZipper w
+left = selectPrev Horizontal
+
+right :: WindowZipper w -> WindowZipper w
+right = selectNext Horizontal
+
+up :: WindowZipper w -> WindowZipper w
+up = selectPrev Vertical
+
+down :: WindowZipper w -> WindowZipper w
+down = selectNext Horizontal
