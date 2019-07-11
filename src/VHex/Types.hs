@@ -10,7 +10,7 @@ module VHex.Types
 , cfgScrollOffL, cfgBytesPerRowMultipleL
 
 , EditorState(..)
-, esModeL, esWindowL, esFilePathL
+, esModeL, esWindowL, esFilePathL, esConfigL
 
 , WindowState(..)
 , wsBufferL, wsLayoutL, wsScrollPosL

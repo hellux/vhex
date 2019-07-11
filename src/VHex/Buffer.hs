@@ -1,7 +1,9 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module VHex.Buffer
-( BufferContext, Buffer
+( BufferM(..)
+, BufferContext(..)
+, Buffer(..), toBuffer, fromBuffer
 , bSelected
 , curHori
 ) where
@@ -39,8 +41,6 @@ data BufferContext = BufferContext
     }
 suffixLenses ''BufferContext
 
-type BufferM = Reader BufferContext
-
 data Buffer = Buffer
     { bBuf :: ByteZipper
     -- ^ Editing buffer contents and cursor position.
@@ -49,30 +49,20 @@ data Buffer = Buffer
     }
 suffixLenses ''Buffer
 
-{-
-toBufferContext :: WindowState -> EventM Name BufferContext
-toBufferContext ws = do
-    extent <- lookupExtent EditorWindow
-    let (width, height) = case extent of
-                            Nothing -> (0, 0)
-                            Just (Extent _ _ dims _) -> dims
-    let rows = bytesPerRow (ws^.wsLayoutL)
-                           width
-                           (BZ.length (ws^.wsBufferL))
-        cols = height
-    return BufferContext { bcBuf = ws^.wsBufferL
-                         , bScroll = ws^.wsScrollPosL
-                         , bcRows = rows
-                         , bcCols = cols
-                         }
+type BufferM = Reader BufferContext
 
-fromBufferContext :: BufferContext -> WindowState -> WindowState
-fromBufferContext bc = (wsBufferL    .~ bc^.bBufL)
-                     . (wsScrollPosL .~ bc^.bScrollL)
-                         -}
+toBuffer :: WindowState -> Buffer
+toBuffer ws = Buffer { bBuf = wsBuffer ws
+                     , bScroll = wsScrollPos ws
+                     }
+
+fromBuffer :: Buffer -> WindowState -> WindowState
+fromBuffer buf ws = ws { wsBuffer = bBuf buf
+                       , wsScrollPos = bScroll buf
+                       }
 
 bCursor :: Buffer -> Int
-bCursor = BZ.location . (^.bBufL)
+bCursor = BZ.location . bBuf
 
 bMove :: Int -> Buffer -> Buffer
 bMove d = bBufL %~ BZ.move d
@@ -81,10 +71,10 @@ bMoveTo :: Int -> Buffer -> Buffer
 bMoveTo pos = bBufL %~ BZ.moveTo pos
 
 bSelected :: Buffer -> Maybe Word8
-bSelected = BZ.selected . (^.bBufL)
+bSelected = BZ.selected . bBuf
 
 bSize :: Buffer -> Int
-bSize = BZ.length . (^.bBufL)
+bSize = BZ.length . bBuf
 
 followCursor :: Buffer -> BufferM Buffer
 followCursor b = do
@@ -92,13 +82,12 @@ followCursor b = do
     cols <- view bcColsL
     scrollOff <- view $ bcConfigL.cfgScrollOffL
 
-    let bottomMargin = bSize b-1 - rows*(cols-1)
-        upperMargin = bCursor b + rows*(scrollOff+1-cols)
+    let bottomMargin = bSize b-1 - cols*(rows-1)
+        upperMargin = bCursor b + cols*(scrollOff+1-rows)
         minPos = clamp 0 upperMargin bottomMargin
-        lowerMargin = bCursor b - rows*scrollOff
+        lowerMargin = bCursor b - cols*scrollOff
         newPos = clamp minPos lowerMargin (b^.bScrollL)
-
-    return $ b & bMoveTo (floorN rows newPos)
+    return $ b & bScrollL .~ (floorN cols newPos)
 
 curHori :: Direction -> Buffer -> BufferM Buffer
-curHori dir b = b & bMove (fromDir dir) & return
+curHori dir b = b & bMove (fromDir dir) & followCursor

@@ -2,8 +2,6 @@ module VHex.Main (vhex) where
 
 import System.Environment (getArgs)
 
-import qualified Data.ByteString as B
-
 import Lens.Micro
 
 import Graphics.Vty.Input.Events (Event(..), Key(..))
@@ -30,6 +28,10 @@ initialState = EditorState
         , wsScrollPos = 0
         }
     , esFilePath = Nothing
+    , esConfig = VHexConfig
+        { cfgScrollOff = 5
+        , cfgBytesPerRowMultiple = 4
+        }
     }
 
 update :: EditorState -> BrickEvent Name e -> EventM Name (Next EditorState)
@@ -38,15 +40,12 @@ update es (VtyEvent vtye) = case esMode es of
         CmdEx cmdLine -> updateCmd es vtye cmdLine
         CmdNone _ -> case vtye of
                         EvKey (KChar ':') [] -> es & esModeL .~ (NormalMode $ CmdEx $ LZ.fromList "") & continue
-                        _ -> do
-                            ws' <- updateWindow vtye (es^.esWindowL)
-                            continue $ es & esWindowL .~ ws'
+                        _ -> updateWindow vtye es >>= continue
     InputMode _ -> continue es -- inputMode im vtye m >>= continue
 update es _ = continue es
 
 view :: EditorState -> [Widget Name]
---view m = [ viewEditor m <=> viewStatusLine m <=> viewCmdLine m ]
-view m = [ viewStatusLine m <=> viewCmdLine m ]
+view es = [ viewWindow es <=> viewStatusLine es <=> viewCmdLine es ]
 
 app :: App EditorState e Name
 app = App { appDraw = view
