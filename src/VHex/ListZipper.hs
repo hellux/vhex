@@ -4,13 +4,15 @@ module VHex.ListZipper ( ListZipper
                        , before, selected, after
                        , position
                        , length
-                       , left, right
+                       , move, left, right
+                       , beginning, end
                        , push, pop
                        ) where
 
 import Prelude hiding (null, length)
 
 import qualified Data.List as List
+import Brick.Types (Direction(Up, Down))
 
 data ListZipper a = ListZipper [a] [a] deriving (Show)
 
@@ -46,6 +48,10 @@ after (ListZipper _ (_:aft)) = aft
 length :: ListZipper a -> Int
 length = List.length . toList
 
+move :: Direction -> ListZipper a -> ListZipper a
+move Up = left
+move Down = right
+
 left :: ListZipper a -> ListZipper a
 left lz@(ListZipper [] _) = lz
 left (ListZipper (nextSel:bef) aft) = ListZipper bef (nextSel:aft)
@@ -53,6 +59,15 @@ left (ListZipper (nextSel:bef) aft) = ListZipper bef (nextSel:aft)
 right :: ListZipper a -> ListZipper a
 right lz@(ListZipper _ []) = lz
 right (ListZipper bef (sel:aft)) = ListZipper (sel:bef) aft
+
+beginning :: ListZipper a -> ListZipper a
+beginning lz@(ListZipper _ []) = lz
+beginning lz@(ListZipper _ [_]) = lz
+beginning lz = right lz
+
+end :: ListZipper a -> ListZipper a
+end lz@(ListZipper [] _) = lz
+end lz = left lz
 
 push :: a -> ListZipper a -> ListZipper a
 push a (ListZipper bef aft) = ListZipper (a:bef) aft

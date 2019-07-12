@@ -50,56 +50,91 @@ bytesPerRow l w bprm byteCount = max 1 $ floorN bprm maxBytes where
     padding = LZ.length l - 1
     maxBytes = div (w - offsetWidth - padding) linWidth
 
+normalMode :: Mode
+normalMode = NormalMode (CmdNone Nothing)
+
+insertMode :: Mode
+insertMode = InputMode InsertMode InputState
+    { isInput = LZ.empty
+    , isNewByte = True
+    }
+
+replaceMode :: Mode
+replaceMode = InputMode ReplaceMode InputState
+    { isInput = LZ.empty
+    , isNewByte = True
+    }
+
 updateWindow :: Event -> EditorState -> EventM Name EditorState
-updateWindow vtye es = do
+updateWindow vtye es = case vtye of
+    EvKey KEsc        [] -> es & esModeL .~ normalMode & return
+    EvKey (KChar 'i') [] -> es & esModeL .~ insertMode & return
+    EvKey (KChar 'r') [] -> es & esModeL .~ replaceMode & return
+    _ -> updateWindow' vtye es
+
+normalOp :: Event -> (Buffer -> BufferM Buffer)
+normalOp vtye = case vtye of
+    EvKey (KChar 'h') [] -> curHori Up
+    EvKey KLeft [] -> curHori Up
+    EvKey (KChar 'j') [] -> curVert Down
+    EvKey KDown [] -> curVert Down
+    EvKey (KChar 'k') [] -> curVert Up
+    EvKey KUp [] -> curVert Up
+    EvKey (KChar 'l') [] -> curHori Down
+    EvKey KRight [] -> curHori Down
+    _ -> return
+
+inputOp :: Event -> (Input -> InputM Input)
+inputOp vtye = case vtye of
+    EvKey KLeft [] -> inputCurHori Up
+    EvKey KRight [] -> inputCurHori Down
+    _ -> return
+
+updateWindow' :: Event -> EditorState -> EventM Name EditorState
+updateWindow' vtye es = do
     extent <- lookupExtent EditorWindow
     let (width, height) = case extent of
                 Nothing -> (0, 0)
                 Just (Extent _ _ dims _) -> dims
-        perRow = bytesPerRow (es^.esWindowL^.wsLayoutL)
+        perRow = bytesPerRow (es^.esWindowL.wsLayoutL)
                              width
-                             (es^.esConfigL^.cfgBytesPerRowMultipleL)
-                             (es^.esWindowL^.wsBufferL&BZ.length)
+                             (es^.esConfigL.cfgBytesPerRowMultipleL)
+                             (es^.esWindowL.wsBufferL&BZ.length)
         bc = BufferContext
             { bcConfig = es^.esConfigL
-            , bcRows = perRow
-            , bcCols = height
+            , bcRows = height
+            , bcCols = perRow
             } 
     case esMode es of
-        NormalMode _ -> return $ es & esWindowL %~ fromBuffer bufNext
-            where
-                op = case vtye of
-                        EvKey KLeft [] -> curHori Up
-                        EvKey KRight [] -> curHori Down
-                        _ -> return
-                bufNext = runReader (op $ toBuffer $ esWindow es) bc
-        InputMode is -> return $ es & (fromInput inpNext)
-            where
-                inpPrev = Input
-                    { iBuf = Buffer { bBuf = es^.esWindowL^.wsBufferL
-                                    , bScroll = es^.esWindowL^.wsScrollPosL
+        NormalMode _ -> es & esWindowL %~ fromBuffer bufNext & return
+            where op = normalOp vtye
+                  bufNext = runReader (op $ toBuffer $ esWindow es) bc
+        InputMode im is -> es & fromInput inpNext & return
+            where op = inputOp vtye
+                  inpPrev = Input
+                    { iBuf = Buffer { bBuf = es^.esWindowL.wsBufferL
+                                    , bScroll = es^.esWindowL.wsScrollPosL
                                     }
                     , iIs = is
                     }
-                bv = es^.esWindowL^.wsLayoutL&LZ.selected
-                ic = InputContext
-                    { icFromWord = BV.fromWord bv
-                    , icToWord = BV.toWord bv
-                    }
-                inpNext' = runReaderT (return inpPrev) ic :: BufferM Input
-                inpNext = runReader inpNext' bc
+                  ic = InputContext
+                      { icByteView = es^.esWindowL.wsLayoutL&LZ.selected
+                      , icInsMode = im
+                      }
+                  inpNext' = runReaderT (op inpPrev) ic
+                  inpNext = runReader inpNext' bc
 
 viewOffset :: ByteViewContext -> Widget Name
 viewOffset bvc =
     ( vBox
     . zipWith withAttr (fmap styleRow [0..rows bvc-1])
     . fmap (hLimit (hexLength (bufLength bvc)) . padLeft Max . str . display)
-    ) [start bvc, start bvc+(cols bvc)..]
+    ) [start bvc, start bvc+cols bvc..]
     where
     styleRow r = if selectedRow bvc == r
                     then attrOffsetCursorLine
                     else attrOffset
-    display offset = if offset <= (bufLength bvc)
+    display offset = if offset <= bufLength bvc
                         then showHex offset ""
                         else "~"
 
@@ -133,7 +168,7 @@ viewByteView bvc (focused, bv) =
                     $ str
                     $ padOut (BV.displayWidth bv) ' ' (LZ.toList inp)
     styleRow r row =
-        let attr = if r == (selectedRow bvc)
+        let attr = if r == selectedRow bvc
                     then attrCursorLine
                     else attrDef
         in withAttr attr row
@@ -145,10 +180,10 @@ viewWindow es = Widget Greedy Greedy $ do
     ctx <- getContext
     let ws = es^.esWindowL
         buf = ws^.wsBufferL
-        perRow = bytesPerRow (es^.esWindowL^.wsLayoutL)
+        perRow = bytesPerRow (es^.esWindowL.wsLayoutL)
                              (ctx^.availWidthL)
-                             (es^.esConfigL^.cfgBytesPerRowMultipleL)
-                             (BZ.length buf)
+                             (es^.esConfigL.cfgBytesPerRowMultipleL)
+                             (es^.esWindowL.wsBufferL&BZ.length)
         bvc = ByteViewContext
             { visibleBytes = BS.unpack
                            $ BZ.slice (ws^.wsScrollPosL)
@@ -160,7 +195,7 @@ viewWindow es = Widget Greedy Greedy $ do
             , selectedCol = mod (BZ.location buf) perRow
             , bufLength = BZ.length buf
             , input = case es^.esModeL of
-                        InputMode is -> Just (is^.isInputL)
+                        InputMode _ is -> Just (is^.isInputL)
                         _ -> Nothing
             }
         offset = viewOffset bvc

@@ -53,7 +53,7 @@ matches line = filter (isPrefixOf line) $ map fst commands
 openFile :: FilePath -> EditorState -> IO EditorState
 openFile path es = do
     contents <- B.readFile path
-    return $ es & esFilePathL .~ Just path
+    return $ es & esFilePathL ?~ path
                 & esWindowL.wsBufferL .~ BZ.byteZipper contents
 
 saveFile:: String -> EditorState -> IO EditorState
@@ -134,6 +134,6 @@ viewCmdLine es = case esMode es of
             let i = LZ.position cmdLine + 1
             in showCursor CmdCursor (Location (i,0))
                 $ str (":" ++ LZ.toList cmdLine)
-    InputMode is -> case isMode is of
+    InputMode im _ -> case im of
         ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
         InsertMode -> withAttr attrMode $ str "-- INSERT --"

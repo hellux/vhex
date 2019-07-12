@@ -34,14 +34,15 @@ initialState = EditorState
         }
     }
 
+commandMode :: Mode
+commandMode = NormalMode $ CmdEx $ LZ.fromList ""
+
 update :: EditorState -> BrickEvent Name e -> EventM Name (Next EditorState)
 update es (VtyEvent vtye) = case esMode es of
-    NormalMode cm -> case cm of
-        CmdEx cmdLine -> updateCmd es vtye cmdLine
-        CmdNone _ -> case vtye of
-                        EvKey (KChar ':') [] -> es & esModeL .~ (NormalMode $ CmdEx $ LZ.fromList "") & continue
-                        _ -> updateWindow vtye es >>= continue
-    InputMode _ -> continue es -- inputMode im vtye m >>= continue
+    NormalMode (CmdEx cmdLine) -> updateCmd es vtye cmdLine
+    _ -> case vtye of
+        EvKey (KChar ':') [] -> es & esModeL .~ commandMode & continue
+        _ -> updateWindow vtye es >>= continue
 update es _ = continue es
 
 view :: EditorState -> [Widget Name]

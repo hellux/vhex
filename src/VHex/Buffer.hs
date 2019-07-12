@@ -4,8 +4,12 @@ module VHex.Buffer
 ( BufferM(..)
 , BufferContext(..)
 , Buffer(..), toBuffer, fromBuffer
-, bSelected
-, curHori
+
+, cursor
+, selected
+, size
+
+, curHori, curVert
 ) where
 
 import Data.Word (Word8)
@@ -61,33 +65,40 @@ fromBuffer buf ws = ws { wsBuffer = bBuf buf
                        , wsScrollPos = bScroll buf
                        }
 
-bCursor :: Buffer -> Int
-bCursor = BZ.location . bBuf
+cursor :: Buffer -> Int
+cursor = BZ.location . bBuf
 
-bMove :: Int -> Buffer -> Buffer
-bMove d = bBufL %~ BZ.move d
+move :: Int -> Buffer -> Buffer
+move d = bBufL %~ BZ.move d
 
-bMoveTo :: Int -> Buffer -> Buffer
-bMoveTo pos = bBufL %~ BZ.moveTo pos
+moveTo :: Int -> Buffer -> Buffer
+moveTo pos = bBufL %~ BZ.moveTo pos
 
-bSelected :: Buffer -> Maybe Word8
-bSelected = BZ.selected . bBuf
+selected :: Buffer -> Maybe Word8
+selected = BZ.selected . bBuf
 
-bSize :: Buffer -> Int
-bSize = BZ.length . bBuf
+size :: Buffer -> Int
+size = BZ.length . bBuf
 
 followCursor :: Buffer -> BufferM Buffer
 followCursor b = do
-    rows <- view bcRowsL
-    cols <- view bcColsL
+    rows <- asks bcRows
+    cols <- asks bcCols
     scrollOff <- view $ bcConfigL.cfgScrollOffL
 
-    let bottomMargin = bSize b-1 - cols*(rows-1)
-        upperMargin = bCursor b + cols*(scrollOff+1-rows)
+    let bottomMargin = size b-1 - cols*(rows-1)
+        upperMargin = cursor b + cols*(scrollOff+1-rows)
         minPos = clamp 0 upperMargin bottomMargin
-        lowerMargin = bCursor b - cols*scrollOff
+        lowerMargin = cursor b - cols*scrollOff
         newPos = clamp minPos lowerMargin (b^.bScrollL)
-    return $ b & bScrollL .~ (floorN cols newPos)
+    b & bScrollL .~ floorN cols newPos & return
 
 curHori :: Direction -> Buffer -> BufferM Buffer
-curHori dir b = b & bMove (fromDir dir) & followCursor
+curHori dir b = b & move (fromDir dir) & followCursor
+
+curVert :: Direction -> Buffer -> BufferM Buffer
+curVert dir b = do
+    step <- asks bcCols
+    let d = fromDir dir
+        newPos = clamp 0 (size b-1) (cursor b + d*step)
+    b & moveTo newPos & followCursor

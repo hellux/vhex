@@ -22,7 +22,7 @@ module VHex.Types
 
 , InsMode(..)
 , InputState(..)
-, isModeL, isInputL, isNewByteL
+, isInputL, isNewByteL
 ) where
 
 {-
@@ -51,30 +51,28 @@ data Name = EditorWindow
 type Layout = ListZipper ByteView
 type CmdLine = ListZipper Char
 
-data MsgType = InfoMsg | ErrorMsg
+data MsgType = InfoMsg | ErrorMsg deriving (Show)
 
 data MsgState = MsgState
     { msgType :: MsgType 
     , msgContents :: String
-    }
+    } deriving (Show)
 
 data CmdLineMode = CmdNone (Maybe MsgState)
                  | CmdEx CmdLine
 
-data InsMode = InsertMode | ReplaceMode
+data InsMode = InsertMode | ReplaceMode deriving (Show)
 
 data InputState = InputState
-    { isMode :: InsMode
-    -- ^ Input mode.
-    , isInput :: ListZipper Char
+    { isInput :: ListZipper Char
     -- ^ Input contents and cursor
     , isNewByte :: Bool
     -- ^ Entered new byte.
-    }
+    } deriving (Show)
 suffixLenses ''InputState
 
 data Mode = NormalMode CmdLineMode
-          | InputMode InputState
+          | InputMode InsMode InputState
 
 data WindowState = WindowState
     { wsBuffer :: ByteZipper
