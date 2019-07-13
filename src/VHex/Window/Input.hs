@@ -10,7 +10,6 @@ module VHex.Window.Input
 , inputCurHori, inputCurVert
 ) where
 
-import Data.Word (Word8)
 import Data.Maybe (isJust)
 
 import Control.Monad.Reader
@@ -20,9 +19,6 @@ import Lens.Micro
 import Brick.Types
 
 import VHex.Types
-import VHex.ByteZipper (ByteZipper)
-import qualified VHex.ByteZipper as BZ
-import VHex.ListZipper (ListZipper)
 import qualified VHex.ListZipper as LZ
 
 import VHex.Window.Buffer (Buffer, BufferM)
@@ -34,7 +30,6 @@ data InputContext = InputContext
     { icByteView :: ByteView
     , icInsMode :: InsMode
     }
-suffixLenses ''InputContext
 
 type InputM = ReaderT InputContext Buf.BufferM
 
@@ -75,7 +70,7 @@ inputLoad i = do
 inputSave :: Input -> InputM Input
 inputSave i = do
     bv <- asks icByteView
-    case i^.iIsL.isInputL&LZ.toList&(BV.toWord bv) of
+    case i^.iIsL.isInputL&LZ.toList&BV.toWord bv of
         Nothing -> i & return
         Just w -> i & iBufL %~ Buf.replace w & return
 

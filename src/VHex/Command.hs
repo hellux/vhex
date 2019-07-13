@@ -71,15 +71,15 @@ saveFile path es = do
 emptyMsg :: EditorState -> EditorState
 emptyMsg = esModeL .~ (NormalMode $ CmdNone Nothing)
 
-msg :: MsgType -> String -> EditorState -> EditorState
-msg t m = esModeL .~ (NormalMode $ CmdNone $ Just msgState) where
+message :: MsgType -> String -> EditorState -> EditorState
+message t m = esModeL .~ (NormalMode $ CmdNone $ Just msgState) where
     msgState = MsgState { msgType = t, msgContents = m }
 
 infoMsg :: String -> EditorState -> EditorState
-infoMsg = msg InfoMsg
+infoMsg = message InfoMsg
 
 errorMsg :: String -> EditorState -> EditorState
-errorMsg = msg ErrorMsg
+errorMsg = message ErrorMsg
 
 executeCmd :: [String] -> EditorState -> EventM Name (Next EditorState)
 executeCmd [] = emptyMsg >>> continue

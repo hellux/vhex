@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module VHex.Window.Buffer
-( BufferM(..)
+( BufferM
 , BufferContext(..)
 , Buffer(..), toBuffer, fromBuffer
 
@@ -22,20 +22,14 @@ import Lens.Micro.Mtl (view)
 
 import Brick.Types
     ( Direction
-    , EventM
-    , Extent(..)
     , suffixLenses
     )
-import Brick.Main (lookupExtent)
 import Brick.Util (clamp)
 
 import VHex.Types
-import VHex.Util (floorN, hexLength, fromDir)
+import VHex.Util (floorN, fromDir)
 import VHex.ByteZipper (ByteZipper)
 import qualified VHex.ByteZipper as BZ
-import qualified VHex.ListZipper as LZ
-
-import qualified VHex.Window.ByteView as BV
 
 data BufferContext = BufferContext
     { bcConfig :: VHexConfig
@@ -87,8 +81,8 @@ size = BZ.length . bBuf
 
 followCursor :: Buffer -> BufferM Buffer
 followCursor b = do
-    rows <- asks bcRows
-    cols <- asks bcCols
+    rows <- view bcRowsL
+    cols <- view bcColsL
     scrollOff <- view $ bcConfigL.cfgScrollOffL
 
     let bottomMargin = size b-1 - cols*(rows-1)
@@ -103,7 +97,7 @@ curHori dir b = b & move (fromDir dir) & followCursor
 
 curVert :: Direction -> Buffer -> BufferM Buffer
 curVert dir b = do
-    step <- asks bcCols
+    step <- view bcColsL
     let d = fromDir dir
         newPos = clamp 0 (size b-1) (cursor b + d*step)
     b & moveTo newPos & followCursor
