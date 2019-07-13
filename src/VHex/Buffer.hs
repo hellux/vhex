@@ -8,6 +8,7 @@ module VHex.Buffer
 , cursor
 , selected
 , size
+, replace
 
 , curHori, curVert
 ) where
@@ -76,6 +77,9 @@ moveTo pos = bBufL %~ BZ.moveTo pos
 
 selected :: Buffer -> Maybe Word8
 selected = BZ.selected . bBuf
+
+replace :: Word8 -> Buffer -> Buffer
+replace w = bBufL %~ BZ.replace w
 
 size :: Buffer -> Int
 size = BZ.length . bBuf

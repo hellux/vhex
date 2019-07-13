@@ -53,24 +53,17 @@ bytesPerRow l w bprm byteCount = max 1 $ floorN bprm maxBytes where
 normalMode :: Mode
 normalMode = NormalMode (CmdNone Nothing)
 
-insertMode :: Mode
-insertMode = InputMode InsertMode InputState
-    { isInput = LZ.empty
-    , isNewByte = True
-    }
-
-replaceMode :: Mode
-replaceMode = InputMode ReplaceMode InputState
-    { isInput = LZ.empty
-    , isNewByte = True
-    }
-
 updateWindow :: Event -> EditorState -> EventM Name EditorState
-updateWindow vtye es = case vtye of
-    EvKey KEsc        [] -> es & esModeL .~ normalMode & return
-    EvKey (KChar 'i') [] -> es & esModeL .~ insertMode & return
-    EvKey (KChar 'r') [] -> es & esModeL .~ replaceMode & return
-    _ -> updateWindow' vtye es
+updateWindow vtye es = case esMode es of
+    NormalMode _ -> case vtye of
+        EvKey (KChar 'i') [] -> es & asInput InsertMode is enterInsertMode
+        EvKey (KChar 'r') [] -> es & asInput ReplaceMode is enterReplaceMode
+        _ -> asBuffer (normalOp vtye) es
+        where is = InputState { isInput = LZ.empty, isNewByte = True }
+    InputMode im is -> case vtye of
+        EvKey KEsc  [] -> es & asInput im is exitInputMode
+                            <&> esModeL .~ normalMode
+        _ -> asInput im is (inputOp vtye) es
 
 normalOp :: Event -> (Buffer -> BufferM Buffer)
 normalOp vtye = case vtye of
@@ -88,10 +81,12 @@ inputOp :: Event -> (Input -> InputM Input)
 inputOp vtye = case vtye of
     EvKey KLeft [] -> inputCurHori Up
     EvKey KRight [] -> inputCurHori Down
+    EvKey KUp [] -> inputCurVert Up
+    EvKey KDown [] -> inputCurVert Down
     _ -> return
 
-updateWindow' :: Event -> EditorState -> EventM Name EditorState
-updateWindow' vtye es = do
+toBufCtx :: EditorState -> EventM Name BufferContext
+toBufCtx es = do
     extent <- lookupExtent EditorWindow
     let (width, height) = case extent of
                 Nothing -> (0, 0)
@@ -100,29 +95,30 @@ updateWindow' vtye es = do
                              width
                              (es^.esConfigL.cfgBytesPerRowMultipleL)
                              (es^.esWindowL.wsBufferL&BZ.length)
-        bc = BufferContext
-            { bcConfig = es^.esConfigL
-            , bcRows = height
-            , bcCols = perRow
-            } 
-    case esMode es of
-        NormalMode _ -> es & esWindowL %~ fromBuffer bufNext & return
-            where op = normalOp vtye
-                  bufNext = runReader (op $ toBuffer $ esWindow es) bc
-        InputMode im is -> es & fromInput inpNext & return
-            where op = inputOp vtye
-                  inpPrev = Input
-                    { iBuf = Buffer { bBuf = es^.esWindowL.wsBufferL
-                                    , bScroll = es^.esWindowL.wsScrollPosL
-                                    }
-                    , iIs = is
-                    }
-                  ic = InputContext
-                      { icByteView = es^.esWindowL.wsLayoutL&LZ.selected
-                      , icInsMode = im
-                      }
-                  inpNext' = runReaderT (op inpPrev) ic
-                  inpNext = runReader inpNext' bc
+    return BufferContext
+        { bcConfig = es^.esConfigL
+        , bcRows = height
+        , bcCols = perRow
+        } 
+
+asBuffer :: (Buffer -> BufferM Buffer) -> EditorState -> EventM Name EditorState
+asBuffer op es = do
+    bc <- toBufCtx es
+    let bufPrev = es & esWindow & toBuffer
+        bufNext = runReader (op bufPrev) bc
+    es & esWindowL %~ fromBuffer bufNext & return
+
+asInput :: InsMode -> InputState -> (Input -> InputM Input) -> EditorState
+        -> EventM Name EditorState
+asInput im is op es = do
+    let inpPrev = es & esWindow & toInput is
+        inpNext = runReaderT (op inpPrev) ic 
+        ic = InputContext
+            { icByteView = es^.esWindowL.wsLayoutL&LZ.selected
+            , icInsMode = im
+            }
+    bc <- toBufCtx es
+    runReader (fmap (fromInput im es) inpNext) bc & return
 
 viewOffset :: ByteViewContext -> Widget Name
 viewOffset bvc =

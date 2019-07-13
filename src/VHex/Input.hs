@@ -1,13 +1,13 @@
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE RankNTypes #-}
 
 module VHex.Input
 ( InputContext(..)
 , InputM
 , Input(..), fromInput, toInput
 
-, inputLoad
-, inputCurHori
+, enterReplaceMode, enterInsertMode, exitInputMode
+
+, inputCurHori, inputCurVert
 ) where
 
 import Data.Word (Word8)
@@ -17,9 +17,9 @@ import Control.Monad.Reader
 import Control.Category ((>>>))
 
 import Lens.Micro
-import Lens.Micro.Mtl
 import Brick.Types
 
+import VHex.Buffer (Buffer, BufferM)
 import qualified VHex.Buffer as Buf
 import VHex.Types
 import VHex.ByteView (ByteView)
@@ -48,12 +48,20 @@ toInput is ws = Input { iIs = is
                       , iBuf = Buf.toBuffer ws
                       }
 
-fromInput :: Input -> EditorState -> EditorState
-fromInput i es = es & esModeL %~ mode
-                    & esWindowL %~ Buf.fromBuffer (iBuf i)
-    where mode (InputMode im _) = InputMode im (iIs i)
-          mode m = m
+fromInput :: InsMode -> EditorState -> Input -> EditorState
+fromInput im es i = es & esModeL .~ InputMode im (iIs i)
+                       & esWindowL %~ Buf.fromBuffer (iBuf i)
 
+exitInputMode :: Input -> InputM Input
+exitInputMode = inputSave
+
+enterReplaceMode :: Input -> InputM Input
+enterReplaceMode = inputLoad
+
+enterInsertMode :: Input -> InputM Input
+enterInsertMode = inputLoad
+
+-- | Load selected word from buffer to string input.
 inputLoad :: Input -> InputM Input
 inputLoad i = do
     bv <- asks icByteView
@@ -62,13 +70,24 @@ inputLoad i = do
                     Just w -> LZ.fromList (BV.fromWord bv w)
     i & iIsL.isInputL .~ newInput & return
 
+-- | Save string input to selected word in buffer.
 inputSave :: Input -> InputM Input
-inputSave = return
+inputSave i = do
+    bv <- asks icByteView
+    case i^.iIsL.isInputL&LZ.toList&(BV.toWord bv) of
+        Nothing -> i & return
+        Just w -> i & iBufL %~ Buf.replace w & return
 
-curHori :: Direction -> Input -> InputM Input
-curHori dir i = do
-    newBuf <- lift $ Buf.curHori dir $ iBuf i
+-- | Apply monadic buffer operation on buffer within Input.
+liftBuf :: (Buffer -> BufferM Buffer) -> Input -> InputM Input
+liftBuf bufOp i = do
+    newBuf <- lift $ bufOp $ iBuf i
     return i { iBuf = newBuf }
+
+inputCurVert :: Direction -> Input -> InputM Input
+inputCurVert dir = inputSave
+               >=> liftBuf (Buf.curVert dir)
+               >=> inputLoad
 
 inputCurHori :: Direction -> Input -> InputM Input
 inputCurHori dir i = do
@@ -85,16 +104,15 @@ inputCurHori dir i = do
         cursor = i^.iBufL&Buf.cursor
         inputValid = isJust $ BV.toWord bv (i^.iIsL.isInputL&LZ.toList)
         nextEdge = case dir of Up -> LZ.end; Down -> LZ.beginning
-    case () of
-     _
-        | onLeftEdge  && cursor == 0      -> i & return
-        | onRightEdge && cursor == maxPos -> i & return
-        | inputValid && (onLeftEdge || onRightEdge) ->
-              i & inputSave
-              >>= curHori dir
-              >>= ((iIsL.isInputL %~ nextEdge) >>> return)
-              >>= inputLoad
-        | onLeftEdge || onRightEdge -> i & return
-        | otherwise -> i & iIsL.isInputL %~ LZ.move dir
-                         & iIsL.isNewByteL .~ False
-                         & inputSave
+        op
+            | onLeftEdge  && cursor == 0      = return
+            | onRightEdge && cursor == maxPos = return
+            | inputValid && (onLeftEdge || onRightEdge) =
+                inputSave >=> liftBuf (Buf.curHori dir)
+                          >=> (iIsL.isInputL %~ nextEdge) >>> return
+                          >=> inputLoad
+            | onLeftEdge || onRightEdge = return
+            | otherwise = iIsL.isInputL %~ LZ.move dir
+                      >>> iIsL.isNewByteL .~ False
+                      >>> inputSave
+    op i
