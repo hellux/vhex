@@ -52,7 +52,7 @@ type CmdLine = ListZipper Char
 data MsgType = InfoMsg | ErrorMsg deriving (Show)
 
 data MsgState = MsgState
-    { msgType :: MsgType 
+    { msgType :: MsgType
     , msgContents :: String
     } deriving (Show)
 

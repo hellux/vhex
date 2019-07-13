@@ -100,7 +100,7 @@ toBufCtx es = do
         { bcConfig = es^.esConfigL
         , bcRows = height
         , bcCols = perRow
-        } 
+        }
 
 asBuffer :: (Buffer -> BufferM Buffer) -> EditorState -> EventM Name EditorState
 asBuffer op es = do
@@ -113,7 +113,7 @@ asInput :: InsMode -> InputState -> (Input -> InputM Input) -> EditorState
         -> EventM Name EditorState
 asInput im is op es = do
     let inpPrev = es & esWindow & toInput is
-        inpNext = runReaderT (op inpPrev) ic 
+        inpNext = runReaderT (op inpPrev) ic
         ic = InputContext
             { icByteView = es^.esWindowL.wsLayoutL&LZ.selected
             , icInsMode = im

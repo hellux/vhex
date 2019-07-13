@@ -34,7 +34,7 @@ data InputContext = InputContext
 type InputM = ReaderT InputContext Buf.BufferM
 
 data Input = Input
-    { iIs :: InputState 
+    { iIs :: InputState
     , iBuf :: Buf.Buffer
     }
 suffixLenses ''Input
