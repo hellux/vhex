@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module VHex.Input
+module VHex.Window.Input
 ( InputContext(..)
 , InputM
 , Input(..), fromInput, toInput
@@ -19,15 +19,16 @@ import Control.Category ((>>>))
 import Lens.Micro
 import Brick.Types
 
-import VHex.Buffer (Buffer, BufferM)
-import qualified VHex.Buffer as Buf
 import VHex.Types
-import VHex.ByteView (ByteView)
-import qualified VHex.ByteView as BV
 import VHex.ByteZipper (ByteZipper)
 import qualified VHex.ByteZipper as BZ
 import VHex.ListZipper (ListZipper)
 import qualified VHex.ListZipper as LZ
+
+import VHex.Window.Buffer (Buffer, BufferM)
+import qualified VHex.Window.Buffer as Buf
+import VHex.Window.ByteView (ByteView)
+import qualified VHex.Window.ByteView as BV
 
 data InputContext = InputContext
     { icByteView :: ByteView

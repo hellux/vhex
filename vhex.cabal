@@ -20,17 +20,16 @@ library
   default-language: Haskell2010
   exposed-modules:  VHex.Main
   other-modules:    VHex.Window
-                    VHex.Buffer
-                    VHex.Input
+                    VHex.Window.ByteView
+                    VHex.Window.Buffer
+                    VHex.Window.Input
                     VHex.StatusLine
                     VHex.Command
                     VHex.ByteZipper
                     VHex.ListZipper
-                    VHex.ByteView
                     VHex.Types
                     VHex.Util
                     VHex.Attributes
-                    VHex.Config
   hs-source-dirs:   src
   build-depends:    base >=4.9 && <5
                   , mtl

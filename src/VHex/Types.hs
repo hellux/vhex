@@ -37,11 +37,12 @@ import Control.Monad.IO.Class (MonadIO)
 import Brick.Types (Next, EventM, suffixLenses)
 import qualified Brick.Main as Brick
 
-import VHex.ByteView (ByteView)
 import VHex.ByteZipper (ByteZipper)
 import qualified VHex.ByteZipper as BZ
 import VHex.ListZipper (ListZipper)
 import qualified VHex.ListZipper as LZ
+
+import VHex.Window.ByteView (ByteView)
 
 data Name = EditorWindow
           | CmdCursor

@@ -20,15 +20,16 @@ import Brick.Types
 import Brick.Widgets.Core
 
 import VHex.Types
-import VHex.Buffer
-import VHex.Input
 import VHex.Attributes
 import VHex.Util
-import VHex.ByteView (ByteView)
-import qualified VHex.ByteView as BV
 import qualified VHex.ByteZipper as BZ
 import VHex.ListZipper (ListZipper)
 import qualified VHex.ListZipper as LZ
+
+import VHex.Window.Buffer
+import VHex.Window.Input
+import VHex.Window.ByteView (ByteView)
+import qualified VHex.Window.ByteView as BV
 
 data ByteViewContext = ByteViewContext
     { visibleBytes :: [Word8]

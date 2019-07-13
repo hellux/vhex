@@ -1,8 +1,9 @@
-module VHex.ByteView ( ByteView
-                     , fromWord, toWord, displayWidth, spaceWidth
-                     , binary, oct, dec, hex
-                     , ascii1, asciiC, asciiCtrl, asciiCaret
-                     ) where
+module VHex.Window.ByteView
+( ByteView
+, fromWord, toWord, displayWidth, spaceWidth
+, binary, oct, dec, hex
+, ascii1, asciiC, asciiCtrl, asciiCaret
+) where
 
 import Numeric ( showHex, readHex
                , showOct, readOct

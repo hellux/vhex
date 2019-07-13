@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module VHex.Buffer
+module VHex.Window.Buffer
 ( BufferM(..)
 , BufferContext(..)
 , Buffer(..), toBuffer, fromBuffer
@@ -33,8 +33,9 @@ import VHex.Types
 import VHex.Util (floorN, hexLength, fromDir)
 import VHex.ByteZipper (ByteZipper)
 import qualified VHex.ByteZipper as BZ
-import qualified VHex.ByteView as BV
 import qualified VHex.ListZipper as LZ
+
+import qualified VHex.Window.ByteView as BV
 
 data BufferContext = BufferContext
     { bcConfig :: VHexConfig
