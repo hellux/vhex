@@ -1,4 +1,3 @@
---{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module VHex.Types
@@ -24,15 +23,6 @@ module VHex.Types
 , InputState(..)
 , isInputL, isNewByteL
 ) where
-
-{-
-import Control.Monad.State ( MonadState, StateT
-                           , liftIO
-                           , get, put
-                           , runStateT
-                           )
-import Control.Monad.IO.Class (MonadIO)
--}
 
 import Brick.Types (suffixLenses)
 
@@ -102,41 +92,3 @@ data EditorState = EditorState
     -- ^ User application options.
     }
 suffixLenses ''EditorState
-
-{-
-newtype VHexM a =
-    VHexM { fromVHexM :: (StateT VHState (EventM Name) a) }
-
-instance Functor VHexM where
-    fmap f (VHexM x) = VHexM (fmap f x)
-
-instance Applicative VHexM where
-    pure x = VHexM (pure x)
-    VHexM f <*> VHexM x = VHexM (f <*> x)
-
-instance Monad VHexM where
-    return x = VHexM (return x)
-    VHexM x >>= f = VHexM (x >>= \ x' -> fromVHexM (f x'))
-
-instance MonadState EditorState VHexM where
-    get = vhCurrentState `fmap` VHexM get
-    put st = VHexM $ do
-        s <- get
-        put $ s { vhCurrentState = st }
-
-instance MonadIO VHexM where
-    liftIO = VHexM . liftIO
-
-data VHState =
-    VHState { vhCurrentState :: EditorState
-            , vhNextAction :: EditorState -> EventM Name (Next EditorState)
-            }
-
-runVHEvent :: EditorState -> VHexM () -> EventM Name (Next EditorState)
-runVHEvent esPrev (VHexM st) = do
-    let vhSt = VHState { vhCurrentState = esPrev
-                       , vhNextAction = Brick.continue
-                       }
-    ((), esNext) <- runStateT st vhSt
-    (vhNextAction esNext) (vhCurrentState esNext)
--}
