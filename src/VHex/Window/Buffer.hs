@@ -11,8 +11,7 @@ module VHex.Window.Buffer
 , bCursor
 , bSelected
 , bSize
-, bMove
-, bReplace
+, bInsert, bReplace
 , bRemove
 
 -- * Operations on buffer in context.
@@ -88,6 +87,9 @@ bMoveTo pos b = b { bBuf = BZ.moveTo pos $ bBuf b }
 
 bSelected :: Buffer -> Maybe Word8
 bSelected = BZ.selected . bBuf
+
+bInsert :: Word8 -> Buffer -> Buffer
+bInsert w b = b { bBuf = BZ.insert w $ bBuf b }
 
 bReplace :: Word8 -> Buffer -> Buffer
 bReplace w b = b { bBuf = BZ.replace w $ bBuf b }

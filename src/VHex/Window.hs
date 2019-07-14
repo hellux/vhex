@@ -6,6 +6,7 @@ module VHex.Window
 import Numeric (showHex)
 
 import Data.Word (Word8)
+import Data.Maybe (fromMaybe)
 import Data.List (intersperse)
 import qualified Data.ByteString as BS
 
@@ -95,14 +96,16 @@ updateWindow vtye esPrev = do
                 _                     -> asBuffer (normalOp vtye)
                 where is = InputState { isInput = LZ.empty, isNewByte = True }
             InputMode im is -> case vtye of
-                EvKey KEsc  [] -> asInput im is Inp.exitInputMode
+                EvKey KEsc   [] -> asInput im is Inp.exitInputMode
                                >=> (esModeL .~ normalMode >>> return)
-                _ -> asInput im is (inputOp vtye)
+                EvKey KEnter [] -> asInput im is Inp.exitInputMode
+                               >=> (esModeL .~ normalMode >>> return)
+                _ -> asInput im is (inputOp im vtye)
 
     esNext <- op esPrev
 
     if (esPrev^.esWindowL.wsBufferL&BZ.length) ==
-       (esPrev^.esWindowL.wsBufferL&BZ.length)
+       (esNext^.esWindowL.wsBufferL&BZ.length)
         then do
             (w, _) <- dimensions esPrev
             let bvs = esPrev & esWindow & wsLayout & LZ.toList
@@ -138,13 +141,20 @@ normalOp vtye = case vtye of
     EvKey (KChar 'X') [] -> Buf.removeWordPrev
     _ -> return
 
-inputOp :: Event -> (Input -> InputM Input)
-inputOp vtye = case vtye of
+inputOp :: InsMode -> Event -> (Input -> InputM Input)
+inputOp im vtye = case vtye of
     EvKey KLeft [] -> Inp.curHori Up
     EvKey KRight [] -> Inp.curHori Down
     EvKey KUp [] -> Inp.curVert Up
     EvKey KDown [] -> Inp.curVert Down
-    _ -> return
+    _ -> case im of
+        InsertMode -> case vtye of
+            EvKey (KChar c) [] -> Inp.insert c
+            _ -> return
+        ReplaceMode -> case vtye of
+            EvKey (KChar c) [] -> Inp.replace c
+            _ -> return
+
 
 toBufCtx :: EditorState -> EventM Name BufferContext
 toBufCtx es = do
@@ -167,8 +177,9 @@ asBuffer op es = do
 asInput :: InsMode -> InputState -> (Input -> InputM Input) -> EditorState
         -> EventM Name EditorState
 asInput im is op es = do
-    let ic = InputContext
-            { icByteView = es^.esWindowL.wsLayoutL&LZ.selected
+    let bv = fromMaybe BV.hex (es^.esWindowL.wsLayoutL&LZ.selected)
+        ic = InputContext
+            { icByteView = bv
             , icInsMode = im
             }
         inpPrev = es & esWindow & toInput is

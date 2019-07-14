@@ -21,7 +21,14 @@ scrollPercentage scroll len = show p ++ "%" where
 
 viewStatusLine :: EditorState -> Widget Name
 viewStatusLine es = withAttr attrStatusLine $ hBox
-    [ hLimitPercent 85 $ padRight Max $ str $ fromMaybe "" $ esFilePath es
-    , padRight Max $ str $ show (BZ.location $ es^.esWindowL.wsBufferL)
-    , str $ scrollPercentage (es^.esWindowL.wsScrollPosL) (BZ.length $ es^.esWindowL.wsBufferL)
+    [ str $ show $ esMode es
+    , hLimitPercent 85 $ padRight Max
+                       $ str
+                       $ fromMaybe "[No Name]"
+                       $ esFilePath es
+    , padRight Max $ str
+                   $ show (BZ.location
+                   $ es^.esWindowL.wsBufferL)
+    , str $ scrollPercentage (es^.esWindowL.wsScrollPosL)
+                             (BZ.length $ es^.esWindowL.wsBufferL)
     ]

@@ -11,6 +11,7 @@ module VHex.Window.Input
 
 -- * Operations on input in context
 , curHori, curVert
+, insert, replace
 ) where
 
 import Data.Maybe (isJust)
@@ -27,7 +28,7 @@ import qualified VHex.ListZipper as LZ
 import VHex.Window.Buffer
     ( Buffer, BufferM
     , fromBuffer, toBuffer
-    , bCursor, bSelected, bSize, bReplace
+    , bCursor, bSelected, bSize, bReplace, bInsert
     )
 import qualified VHex.Window.Buffer as Buf
 import VHex.Window.ByteView (ByteView)
@@ -87,6 +88,7 @@ liftBuf bufOp i = do
 curVert :: Direction -> Input -> InputM Input
 curVert dir = inputSave
            >=> liftBuf (Buf.curVert dir)
+           >=> (iIsL.isNewByteL .~ True) >>> return
            >=> inputLoad
 
 curHori :: Direction -> Input -> InputM Input
@@ -109,10 +111,25 @@ curHori dir i = do
             | onRightEdge && cursor == maxPos = return
             | inputValid && (onLeftEdge || onRightEdge) =
                 inputSave >=> liftBuf (Buf.curHori dir)
-                          >=> (iIsL.isInputL %~ nextEdge) >>> return
+                          >=> (iIsL.isNewByteL .~ True) >>> return
                           >=> inputLoad
+                          >=> (iIsL.isInputL %~ nextEdge) >>> return
             | onLeftEdge || onRightEdge = return
             | otherwise = iIsL.isInputL %~ LZ.move dir
                       >>> iIsL.isNewByteL .~ False
                       >>> inputSave
     op i
+
+insert :: Char -> Input -> InputM Input
+insert c i
+    | i^.iIsL.isNewByteL =
+        i & iBufL %~ bInsert 0
+          & iIsL.isInputL .~ LZ.singleton c
+          & curHori Down
+    | otherwise = do
+        dw <- BV.displayWidth <$> asks icByteView
+        i & iIsL.isInputL %~ (LZ.insert c >>> LZ.take dw)
+          & curHori Down
+
+replace :: Char -> Input -> InputM Input
+replace c = iIsL.isInputL %~ LZ.replace c >>> curHori Down

@@ -59,6 +59,7 @@ data MsgState = MsgState
 
 data CmdLineMode = CmdNone (Maybe MsgState)
                  | CmdEx CmdLine
+                 deriving (Show)
 
 data InsMode = InsertMode | ReplaceMode deriving (Show)
 
@@ -72,6 +73,7 @@ suffixLenses ''InputState
 
 data Mode = NormalMode CmdLineMode
           | InputMode InsMode InputState
+          deriving (Show)
 
 data WindowState = WindowState
     { wsBuffer :: ByteZipper
