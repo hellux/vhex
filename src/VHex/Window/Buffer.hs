@@ -7,7 +7,7 @@ module VHex.Window.Buffer
 -- * Buffer
 , Buffer(..), toBuffer, fromBuffer
 
--- * Pure buffer operations
+-- * ByteZipper wrappers
 , bCursor
 , bSelected
 , bSize
@@ -76,7 +76,7 @@ fromBuffer buf ws = ws { wsBuffer = bBuf buf
                        , wsScrollPos = bScroll buf
                        }
 
--- Buffer operations.
+-- Wrappers for ByteZipper operations on contained buffer.
 
 bCursor :: Buffer -> Int
 bCursor = BZ.location . bBuf
@@ -134,7 +134,7 @@ followCursor b = do
     b & bScrollL .~ floorN cols newPos & return
 
 curHori :: Direction -> Buffer -> BufferM Buffer
-curHori dir b = b & bMove (fromDir dir) & followCursor
+curHori dir b = b & bMove (fromDir dir) & containCursor >>= followCursor
 
 curVert :: Direction -> Buffer -> BufferM Buffer
 curVert dir b = do

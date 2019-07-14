@@ -74,9 +74,9 @@ updateWindow vtye es = case esMode es of
         EvKey KBackTab     [] -> es & esWindowL.wsLayoutL %~ LZ.leftWrap
                                     & return
         EvKey (KChar 'i')  [] -> es & asInput InsertMode is
-                                              Inp.enterInsertMode
+                                              Inp.enterInputMode
         EvKey (KChar 'r')  [] -> es & asInput ReplaceMode is
-                                              Inp.enterReplaceMode
+                                              Inp.enterInputMode
         _                     -> es & asBuffer (normalOp vtye)
         where is = InputState { isInput = LZ.empty, isNewByte = True }
     InputMode im is -> case vtye of

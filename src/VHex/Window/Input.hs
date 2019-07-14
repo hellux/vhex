@@ -6,8 +6,7 @@ module VHex.Window.Input
 , Input(..), fromInput, toInput
 
 -- * Mode change operations
-, enterReplaceMode
-, enterInsertMode
+, enterInputMode
 , exitInputMode
 
 -- Operations on input in context
@@ -57,13 +56,10 @@ fromInput im es i = es & esModeL .~ InputMode im (iIs i)
                        & esWindowL %~ fromBuffer (iBuf i)
 
 exitInputMode :: Input -> InputM Input
-exitInputMode = inputSave
+exitInputMode = inputSave -- TODO remove if empty
 
-enterReplaceMode :: Input -> InputM Input
-enterReplaceMode = inputLoad
-
-enterInsertMode :: Input -> InputM Input
-enterInsertMode = inputLoad
+enterInputMode :: Input -> InputM Input
+enterInputMode = inputLoad
 
 -- | Load selected word from buffer to string input.
 inputLoad :: Input -> InputM Input
