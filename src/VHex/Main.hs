@@ -38,6 +38,7 @@ commandMode :: Mode
 commandMode = NormalMode $ CmdEx $ LZ.fromList ""
 
 update :: EditorState -> BrickEvent Name e -> EventM Name (Next EditorState)
+update es (VtyEvent (EvResize _ _)) = invalidateCache >> continue es
 update es (VtyEvent vtye) = case esMode es of
     NormalMode (CmdEx cmdLine) -> updateCmd es vtye cmdLine
     _ -> case vtye of
