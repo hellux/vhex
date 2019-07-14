@@ -36,7 +36,7 @@ import Data.Word (Word8)
 import Control.Monad.Reader
 import Control.Category ((>>>))
 
-import Lens.Micro ((&), (^.), (%~), (.~))
+import Lens.Micro ((&))
 import Lens.Micro.Mtl (view)
 
 import Brick.Types (Direction(..), suffixLenses)
@@ -61,14 +61,16 @@ data Buffer = Buffer
     -- ^ Editing buffer contents and cursor position.
     , bScroll :: Int
     -- ^ Rows of bytes visible.
+    , bRemoved :: Maybe Int
+    -- ^ Byte at address was removed.
     }
-suffixLenses ''Buffer
 
 type BufferM = Reader BufferContext
 
 toBuffer :: WindowState -> Buffer
 toBuffer ws = Buffer { bBuf = wsBuffer ws
                      , bScroll = wsScrollPos ws
+                     , bRemoved = Nothing
                      }
 
 fromBuffer :: Buffer -> WindowState -> WindowState
@@ -82,19 +84,19 @@ bCursor :: Buffer -> Int
 bCursor = BZ.location . bBuf
 
 bMove :: Int -> Buffer -> Buffer
-bMove d = bBufL %~ BZ.move d
+bMove d b = b { bBuf = BZ.move d $ bBuf b }
 
 bMoveTo :: Int -> Buffer -> Buffer
-bMoveTo pos = bBufL %~ BZ.moveTo pos
+bMoveTo pos b = b { bBuf = BZ.moveTo pos $ bBuf b }
 
 bSelected :: Buffer -> Maybe Word8
 bSelected = BZ.selected . bBuf
 
 bReplace :: Word8 -> Buffer -> Buffer
-bReplace w = bBufL %~ BZ.replace w
+bReplace w b = b { bBuf = BZ.replace w $ bBuf b }
 
 bRemove :: Buffer -> Buffer
-bRemove = bBufL %~ BZ.remove
+bRemove b = b { bBuf = BZ.remove $ bBuf b }
 
 bSize :: Buffer -> Int
 bSize = BZ.length . bBuf
@@ -130,8 +132,8 @@ followCursor b = do
         upperMargin = bCursor b + cols*(scrollOff+1-rows)
         minPos = clamp 0 upperMargin bottomMargin
         lowerMargin = bCursor b - cols*scrollOff
-        newPos = clamp minPos lowerMargin (b^.bScrollL)
-    b & bScrollL .~ floorN cols newPos & return
+        newPos = clamp minPos lowerMargin (bScroll b)
+    b { bScroll = floorN cols newPos } & return
 
 curHori :: Direction -> Buffer -> BufferM Buffer
 curHori dir b = b & bMove (fromDir dir) & containCursor >>= followCursor
@@ -165,7 +167,7 @@ scroll dir b = do
     cols <- view bcColsL
     let prev = bScroll b
         maxPos = floorN cols (bSize b-1)
-    b & bScrollL .~ clamp 0 maxPos (prev+fromDir dir*cols) & keepCursor
+    b { bScroll = clamp 0 maxPos (prev+fromDir dir*cols) } & keepCursor
 
 scrollHalfPage :: Direction -> Buffer -> BufferM Buffer
 scrollHalfPage dir b = do
@@ -175,12 +177,10 @@ scrollHalfPage dir b = do
         newPos = clamp 0 (bSize b-1) (bCursor b+diff)
         newScroll = let maxScroll = floorN cols (bSize b-1)
                     in clamp 0 maxScroll (bScroll b + diff)
-    b & bScrollL .~ newScroll
-      & bMoveTo newPos
-      & followCursor
+    b { bScroll = newScroll } & bMoveTo newPos & followCursor
 
 removeWord :: Buffer -> BufferM Buffer
-removeWord = bRemove >>> containCursor
+removeWord b = b { bRemoved = Just (bCursor b) } & bRemove & containCursor
 
 removeWordPrev :: Buffer -> BufferM Buffer
 removeWordPrev b = if bCursor b == 0

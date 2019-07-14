@@ -9,7 +9,7 @@ module VHex.Window.Input
 , enterInputMode
 , exitInputMode
 
--- Operations on input in context
+-- * Operations on input in context
 , curHori, curVert
 ) where
 

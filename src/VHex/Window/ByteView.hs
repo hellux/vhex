@@ -11,18 +11,38 @@ import Numeric ( showHex, readHex
                , showIntAtBase, readInt
                )
 
+import Data.Function (on)
 import Data.Word (Word8)
-import Data.List (dropWhileEnd)
-import Data.Char (chr, ord, isSpace, toUpper)
+import Data.Char (chr, ord, toUpper)
 
-import VHex.Util (padIn, padOut)
+import VHex.Util (padIn, padOut, trim)
+
+data BVName = Binary
+            | Oct
+            | Dec
+            | Hex
+            | AsciiCtrl
+            | Ascii1
+            | AsciiC
+            | AsciiCaret
+            deriving (Eq, Ord)
 
 data ByteView = ByteView { _fromWord :: Word8 -> String
                          , _toWord :: String -> Maybe Word8
                          , displayWidth :: Int
                          , spaceWidth :: Int
+                         , bvName :: BVName
                          }
 
+instance Eq ByteView where
+    (==) = (==) `on` bvName
+    (/=) = (/=) `on` bvName
+
+instance Ord ByteView where
+    (<)  = (>)  `on` bvName
+    (<=) = (<=) `on` bvName
+    (>)  = (>)  `on` bvName
+    (>=) = (<=) `on` bvName
 -- API functions
 
 fromWord :: ByteView -> Word8 -> String
@@ -32,10 +52,6 @@ toWord :: ByteView -> String -> Maybe Word8
 toWord bv = _toWord bv . trim
 
 -- API helper
-
-trim :: String -> String
-trim " " = " "
-trim s = (dropWhileEnd isSpace . dropWhile isSpace) s
 
 -- Converter helpers
 
@@ -48,20 +64,24 @@ toWordReadS f str = case f str of
                         [(n,[])] -> Just n
                         _ -> Nothing
 
-createByteView :: (Word8 -> ShowS) -> ReadS Word8 -> ByteView
-createByteView s r = ByteView
+createByteView :: (Word8 -> ShowS) -> ReadS Word8 -> BVName -> ByteView
+createByteView s r n = ByteView
     { _fromWord = fromWordShowS s
     , _toWord = toWordReadS r
     , spaceWidth = sw
     , displayWidth = dw
+    , bvName = n
     }
     where fw = fromWordShowS s
           dw = (length . fw) 0
           sw = if dw <= 1 then 0 else 1
 
+-- ByteView implementations
+
 binary :: ByteView
 binary = createByteView (showIntAtBase 2 intToDigit)
                         (readInt 2 isDigit valDigit)
+                        Binary
     where isDigit '0' = True
           isDigit '1' = True
           isDigit _ = False
@@ -71,13 +91,13 @@ binary = createByteView (showIntAtBase 2 intToDigit)
           intToDigit _ = '0'
 
 oct :: ByteView
-oct = createByteView showOct readOct
+oct = createByteView showOct readOct Oct
 
 dec :: ByteView
-dec = createByteView showInt readDec
+dec = createByteView showInt readDec Dec
 
 hex :: ByteView
-hex = createByteView showHex readHex
+hex = createByteView showHex readHex Hex
 
 ascii1 :: ByteView
 ascii1 = ByteView
@@ -89,6 +109,7 @@ ascii1 = ByteView
                         c:_ -> (Just . fromIntegral . ord ) c
     , displayWidth = 1
     , spaceWidth = 0
+    , bvName = Ascii1
     }
 
 asciiC :: ByteView
@@ -106,6 +127,7 @@ asciiC = ByteView
         str -> toWordReadS readOct str
     , displayWidth = 3
     , spaceWidth = 1
+    , bvName = AsciiC
     }
 
 asciiCtrl :: ByteView
@@ -138,6 +160,7 @@ asciiCtrl = ByteView
         str -> toWordReadS readHex str
     , displayWidth = 3
     , spaceWidth = 1
+    , bvName = AsciiCtrl
     }
 
 asciiCaret :: ByteView
@@ -152,4 +175,5 @@ asciiCaret = ByteView
         str -> toWordReadS readHex str
     , displayWidth = 2
     , spaceWidth = 1
+    , bvName = AsciiCaret
     } where toggleCaret w = mod (w+64) 128

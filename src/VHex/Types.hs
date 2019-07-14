@@ -44,6 +44,7 @@ import VHex.Window.ByteView (ByteView)
 data Name = EditorWindow
           | CmdCursor
           | InputCursor
+          | CachedRow ByteView Int
           deriving (Eq, Ord)
 
 type Layout = ListZipper ByteView

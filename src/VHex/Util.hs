@@ -3,8 +3,12 @@ module VHex.Util ( hexLength
                  , padIn, padOut
                  , groupsOf
                  , fromDir
+                 , trim
                  , clamp
                  ) where
+
+import Data.List (dropWhileEnd)
+import Data.Char (isSpace)
 
 import Brick.Types (Direction(Up, Down))
 import Brick.Util (clamp)
@@ -41,3 +45,7 @@ groupsOf :: Int -> [a] -> [[a]]
 groupsOf _ [] = []
 groupsOf n xs = let (y,ys) = splitAt n xs
                 in y : groupsOf n ys
+
+trim :: String -> String
+trim " " = " "
+trim s = (dropWhileEnd isSpace . dropWhile isSpace) s

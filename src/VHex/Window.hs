@@ -10,6 +10,7 @@ import Data.List (intersperse)
 import qualified Data.ByteString as BS
 
 import Control.Monad.Reader
+import Control.Category ((>>>))
 
 import Lens.Micro
 
@@ -63,26 +64,53 @@ bytesPerRow l w bprm byteCount = max 1 $ floorN bprm maxBytes where
     padding = LZ.length l - 1
     maxBytes = div (w - offsetWidth - padding) linWidth
 
+dimensions :: EditorState -> EventM Name (Int, Int)
+dimensions es = do
+    extent <- lookupExtent EditorWindow
+    let (width, height) = case extent of
+                            Nothing -> (0, 0)
+                            Just (Extent _ _ dims _) -> dims
+        perRow = bytesPerRow (es^.esWindowL.wsLayoutL)
+                             width
+                             (es^.esConfigL.cfgBytesPerRowMultipleL)
+                             (es^.esWindowL.wsBufferL&BZ.length)
+    return (perRow, height)
+
 normalMode :: Mode
 normalMode = NormalMode (CmdNone Nothing)
 
 updateWindow :: Event -> EditorState -> EventM Name EditorState
-updateWindow vtye es = case esMode es of
-    NormalMode _ -> case vtye of
-        EvKey (KChar '\t') [] -> es & esWindowL.wsLayoutL %~ LZ.rightWrap
-                                    & return
-        EvKey KBackTab     [] -> es & esWindowL.wsLayoutL %~ LZ.leftWrap
-                                    & return
-        EvKey (KChar 'i')  [] -> es & asInput InsertMode is
-                                              Inp.enterInputMode
-        EvKey (KChar 'r')  [] -> es & asInput ReplaceMode is
-                                              Inp.enterInputMode
-        _                     -> es & asBuffer (normalOp vtye)
-        where is = InputState { isInput = LZ.empty, isNewByte = True }
-    InputMode im is -> case vtye of
-        EvKey KEsc  [] -> es & asInput im is Inp.exitInputMode
-                            <&> esModeL .~ normalMode
-        _ -> asInput im is (inputOp vtye) es
+updateWindow vtye esPrev = do
+    let op :: EditorState -> EventM Name EditorState
+        op = case esMode esPrev of
+            NormalMode _ -> case vtye of
+                EvKey (KChar '\t') [] -> esWindowL.wsLayoutL %~ LZ.rightWrap
+                                      >>> return
+                EvKey KBackTab     [] -> esWindowL.wsLayoutL %~ LZ.leftWrap
+                                      >>> return
+                EvKey (KChar 'i')  [] -> asInput InsertMode is
+                                                 Inp.enterInputMode
+                EvKey (KChar 'r')  [] -> asInput ReplaceMode is
+                                                 Inp.enterInputMode
+                _                     -> asBuffer (normalOp vtye)
+                where is = InputState { isInput = LZ.empty, isNewByte = True }
+            InputMode im is -> case vtye of
+                EvKey KEsc  [] -> asInput im is Inp.exitInputMode
+                               >=> (esModeL .~ normalMode >>> return)
+                _ -> asInput im is (inputOp vtye)
+
+    esNext <- op esPrev
+    (w, _) <- dimensions esPrev
+
+    let bvs = esPrev & esWindow & wsLayout & LZ.toList
+        invalidateRow r = mapM_ (invalidateCacheEntry . (`CachedRow` r)) bvs
+        rowPrev = floorN w (esPrev & esWindow & wsBuffer & BZ.location)
+        rowNext = floorN w (esNext & esWindow & wsBuffer & BZ.location)
+
+    invalidateRow rowPrev
+    invalidateRow rowNext
+
+    return esNext
 
 normalOp :: Event -> (Buffer -> BufferM Buffer)
 normalOp vtye = case vtye of
@@ -117,36 +145,41 @@ inputOp vtye = case vtye of
 
 toBufCtx :: EditorState -> EventM Name BufferContext
 toBufCtx es = do
-    extent <- lookupExtent EditorWindow
-    let (width, height) = case extent of
-                Nothing -> (0, 0)
-                Just (Extent _ _ dims _) -> dims
-        perRow = bytesPerRow (es^.esWindowL.wsLayoutL)
-                             width
-                             (es^.esConfigL.cfgBytesPerRowMultipleL)
-                             (es^.esWindowL.wsBufferL&BZ.length)
+    (w, h) <- dimensions es
     return BufferContext
         { bcConfig = es^.esConfigL
-        , bcRows = height
-        , bcCols = perRow
+        , bcCols = w
+        , bcRows = h
         }
 
 asBuffer :: (Buffer -> BufferM Buffer) -> EditorState -> EventM Name EditorState
 asBuffer op es = do
     bc <- toBufCtx es
+
     let bufPrev = es & esWindow & toBuffer
         bufNext = runReader (op bufPrev) bc
+
+    case bRemoved bufNext of
+        Nothing -> return ()
+        Just i -> let bvs = es & esWindow & wsLayout & LZ.toList
+                      invalidateRow r =
+                        mapM_ (invalidateCacheEntry . (`CachedRow` r)) bvs
+                      line = floorN (bcCols bc) i
+                      maxRow = bufNext & bBuf & BZ.length
+                  in mapM_ invalidateRow [line, line+bcCols bc..maxRow]
+
     es & esWindowL %~ fromBuffer bufNext & return
 
 asInput :: InsMode -> InputState -> (Input -> InputM Input) -> EditorState
         -> EventM Name EditorState
 asInput im is op es = do
-    let inpPrev = es & esWindow & toInput is
-        inpNext = runReaderT (op inpPrev) ic
-        ic = InputContext
+    let ic = InputContext
             { icByteView = es^.esWindowL.wsLayoutL&LZ.selected
             , icInsMode = im
             }
+        inpPrev = es & esWindow & toInput is
+        inpNext = runReaderT (op inpPrev) ic
+
     bc <- toBufCtx es
     runReader (fmap (fromInput im es) inpNext) bc & return
 
@@ -168,6 +201,7 @@ viewByteView :: ByteViewContext -> (Bool, ByteView) -> Widget Name
 viewByteView bvc (focused, bv) =
     ( vBox
     . zipWith styleRow [0..]
+    . zipWith cached (fmap (CachedRow bv) [start bvc, start bvc+cols bvc..])
     . map ( hBox
           . (:) (str "  ")
           . intersperse space
@@ -175,7 +209,7 @@ viewByteView bvc (focused, bv) =
           )
     . groupsOf (cols bvc)
     . zipWith styleCol [ (div i (cols bvc), mod i (cols bvc)) | i <- [0..] ]
-    . (++ [emptyByte])
+--    . (++ [emptyByte])
     . map (str . BV.fromWord bv)
     . visibleBytes
     ) bvc
