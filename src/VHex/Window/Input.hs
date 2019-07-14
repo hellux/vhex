@@ -86,8 +86,8 @@ liftBuf bufOp i = do
 
 curVert :: Direction -> Input -> InputM Input
 curVert dir = inputSave
-               >=> liftBuf (Buf.curVert dir)
-               >=> inputLoad
+           >=> liftBuf (Buf.curVert dir)
+           >=> inputLoad
 
 curHori :: Direction -> Input -> InputM Input
 curHori dir i = do

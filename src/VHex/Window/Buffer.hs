@@ -61,8 +61,6 @@ data Buffer = Buffer
     -- ^ Editing buffer contents and cursor position.
     , bScroll :: Int
     -- ^ Rows of bytes visible.
-    , bRemoved :: Maybe Int
-    -- ^ Byte at address was removed.
     }
 
 type BufferM = Reader BufferContext
@@ -70,7 +68,6 @@ type BufferM = Reader BufferContext
 toBuffer :: WindowState -> Buffer
 toBuffer ws = Buffer { bBuf = wsBuffer ws
                      , bScroll = wsScrollPos ws
-                     , bRemoved = Nothing
                      }
 
 fromBuffer :: Buffer -> WindowState -> WindowState
@@ -180,7 +177,7 @@ scrollHalfPage dir b = do
     b { bScroll = newScroll } & bMoveTo newPos & followCursor
 
 removeWord :: Buffer -> BufferM Buffer
-removeWord b = b { bRemoved = Just (bCursor b) } & bRemove & containCursor
+removeWord  = bRemove >>> containCursor
 
 removeWordPrev :: Buffer -> BufferM Buffer
 removeWordPrev b = if bCursor b == 0

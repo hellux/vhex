@@ -100,15 +100,18 @@ updateWindow vtye esPrev = do
                 _ -> asInput im is (inputOp vtye)
 
     esNext <- op esPrev
-    (w, _) <- dimensions esPrev
 
-    let bvs = esPrev & esWindow & wsLayout & LZ.toList
-        invalidateRow r = mapM_ (invalidateCacheEntry . (`CachedRow` r)) bvs
-        rowPrev = floorN w (esPrev & esWindow & wsBuffer & BZ.location)
-        rowNext = floorN w (esNext & esWindow & wsBuffer & BZ.location)
-
-    invalidateRow rowPrev
-    invalidateRow rowNext
+    if (esPrev^.esWindowL.wsBufferL&BZ.length) ==
+       (esPrev^.esWindowL.wsBufferL&BZ.length)
+        then do
+            (w, _) <- dimensions esPrev
+            let bvs = esPrev & esWindow & wsLayout & LZ.toList
+                invalidateRow r = mapM_ (invalidateCacheEntry . (`CachedRow` r)) bvs
+                rowPrev = floorN w (esPrev & esWindow & wsBuffer & BZ.location)
+                rowNext = floorN w (esNext & esWindow & wsBuffer & BZ.location)
+            invalidateRow rowPrev
+            invalidateRow rowNext
+        else invalidateCache
 
     return esNext
 
@@ -158,15 +161,6 @@ asBuffer op es = do
 
     let bufPrev = es & esWindow & toBuffer
         bufNext = runReader (op bufPrev) bc
-
-    case bRemoved bufNext of
-        Nothing -> return ()
-        Just i -> let bvs = es & esWindow & wsLayout & LZ.toList
-                      invalidateRow r =
-                        mapM_ (invalidateCacheEntry . (`CachedRow` r)) bvs
-                      line = floorN (bcCols bc) i
-                      maxRow = bufNext & bBuf & BZ.length
-                  in mapM_ invalidateRow [line, line+bcCols bc..maxRow]
 
     es & esWindowL %~ fromBuffer bufNext & return
 
