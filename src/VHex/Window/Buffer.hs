@@ -3,31 +3,46 @@
 module VHex.Window.Buffer
 ( BufferM
 , BufferContext(..)
+
+-- * Buffer
 , Buffer(..), toBuffer, fromBuffer
 
-, cursor
-, selected
-, size
-, replace
+-- * Pure buffer operations
+, bCursor
+, bSelected
+, bSize
+, bMove
+, bReplace
+, bRemove
 
+-- * Operations on buffer in context.
+
+-- ** Cursor movement
 , curHori, curVert
+, curBeginning, curEnd
+, curTop, curBottom
+
+-- ** Scrolling
+, scroll
+, scrollHalfPage
+
+-- ** Modification
+, removeWord
+, removeWordPrev
 ) where
 
 import Data.Word (Word8)
 
 import Control.Monad.Reader
+import Control.Category ((>>>))
 
 import Lens.Micro ((&), (^.), (%~), (.~))
 import Lens.Micro.Mtl (view)
 
-import Brick.Types
-    ( Direction
-    , suffixLenses
-    )
-import Brick.Util (clamp)
+import Brick.Types (Direction(..), suffixLenses)
 
 import VHex.Types
-import VHex.Util (floorN, fromDir)
+import VHex.Util (floorN, fromDir, clamp)
 import VHex.ByteZipper (ByteZipper)
 import qualified VHex.ByteZipper as BZ
 
@@ -61,43 +76,113 @@ fromBuffer buf ws = ws { wsBuffer = bBuf buf
                        , wsScrollPos = bScroll buf
                        }
 
-cursor :: Buffer -> Int
-cursor = BZ.location . bBuf
+-- Buffer operations.
 
-move :: Int -> Buffer -> Buffer
-move d = bBufL %~ BZ.move d
+bCursor :: Buffer -> Int
+bCursor = BZ.location . bBuf
 
-moveTo :: Int -> Buffer -> Buffer
-moveTo pos = bBufL %~ BZ.moveTo pos
+bMove :: Int -> Buffer -> Buffer
+bMove d = bBufL %~ BZ.move d
 
-selected :: Buffer -> Maybe Word8
-selected = BZ.selected . bBuf
+bMoveTo :: Int -> Buffer -> Buffer
+bMoveTo pos = bBufL %~ BZ.moveTo pos
 
-replace :: Word8 -> Buffer -> Buffer
-replace w = bBufL %~ BZ.replace w
+bSelected :: Buffer -> Maybe Word8
+bSelected = BZ.selected . bBuf
 
-size :: Buffer -> Int
-size = BZ.length . bBuf
+bReplace :: Word8 -> Buffer -> Buffer
+bReplace w = bBufL %~ BZ.replace w
 
+bRemove :: Buffer -> Buffer
+bRemove = bBufL %~ BZ.remove
+
+bSize :: Buffer -> Int
+bSize = BZ.length . bBuf
+
+-- Operations on buffers in context.
+
+-- | Keep cursor within bounds of the buffer.
+containCursor :: Buffer -> BufferM Buffer
+containCursor b = let clamped = clamp 0 (bSize b-1) (bCursor b)
+                  in b & bMoveTo clamped & return
+
+-- | Move cursor to keep it in view when scrolling.
+keepCursor :: Buffer -> BufferM Buffer
+keepCursor b = do
+    cols <- view bcColsL
+    rows <- view bcRowsL
+    scrollOff <- view $ bcConfigL.cfgScrollOffL
+
+    let curRow = div (bCursor b - bScroll b) cols
+        newRow = clamp scrollOff (rows-scrollOff-1) curRow
+        newPos = bCursor b + ((newRow-curRow)*cols)
+        finalPos = min (bSize b-1) newPos
+    b & bMoveTo finalPos & return
+
+-- | Scroll to keep cursor in view when moving.
 followCursor :: Buffer -> BufferM Buffer
 followCursor b = do
     rows <- view bcRowsL
     cols <- view bcColsL
     scrollOff <- view $ bcConfigL.cfgScrollOffL
 
-    let bottomMargin = size b-1 - cols*(rows-1)
-        upperMargin = cursor b + cols*(scrollOff+1-rows)
+    let bottomMargin = bSize b-1 - cols*(rows-1)
+        upperMargin = bCursor b + cols*(scrollOff+1-rows)
         minPos = clamp 0 upperMargin bottomMargin
-        lowerMargin = cursor b - cols*scrollOff
+        lowerMargin = bCursor b - cols*scrollOff
         newPos = clamp minPos lowerMargin (b^.bScrollL)
     b & bScrollL .~ floorN cols newPos & return
 
 curHori :: Direction -> Buffer -> BufferM Buffer
-curHori dir b = b & move (fromDir dir) & followCursor
+curHori dir b = b & bMove (fromDir dir) & followCursor
 
 curVert :: Direction -> Buffer -> BufferM Buffer
 curVert dir b = do
     step <- view bcColsL
-    let d = fromDir dir
-        newPos = clamp 0 (size b-1) (cursor b + d*step)
-    b & moveTo newPos & followCursor
+    b & bMoveTo (bCursor b + fromDir dir*step) & containCursor >>= followCursor
+
+curBeginning :: Buffer -> BufferM Buffer
+curBeginning b = do
+    cols <- view bcColsL
+    let newPos = floorN cols (bCursor b)
+    b & bMoveTo newPos & return
+
+curEnd :: Buffer -> BufferM Buffer
+curEnd b = do
+    cols <- view bcColsL
+    let lineEnd = floorN cols (bCursor b) + cols - 1
+        newPos = min lineEnd (bSize b - 1)
+    b & bMoveTo newPos & return
+
+curTop :: Buffer -> BufferM Buffer
+curTop = bMoveTo 0 >>> followCursor
+
+curBottom :: Buffer -> BufferM Buffer
+curBottom b = b & bMoveTo (bSize b-1) & followCursor
+
+scroll :: Direction -> Buffer -> BufferM Buffer
+scroll dir b = do
+    cols <- view bcColsL
+    let prev = bScroll b
+        maxPos = floorN cols (bSize b-1)
+    b & bScrollL .~ clamp 0 maxPos (prev+fromDir dir*cols) & keepCursor
+
+scrollHalfPage :: Direction -> Buffer -> BufferM Buffer
+scrollHalfPage dir b = do
+    cols <- view bcColsL
+    rows <- view bcRowsL
+    let diff = fromDir dir * (div rows 2 * cols)
+        newPos = clamp 0 (bSize b-1) (bCursor b+diff)
+        newScroll = let maxScroll = floorN cols (bSize b-1)
+                    in clamp 0 maxScroll (bScroll b + diff)
+    b & bScrollL .~ newScroll
+      & bMoveTo newPos
+      & followCursor
+
+removeWord :: Buffer -> BufferM Buffer
+removeWord = bRemove >>> containCursor
+
+removeWordPrev :: Buffer -> BufferM Buffer
+removeWordPrev b = if bCursor b == 0
+                    then b & return
+                    else b & (curHori Up >=> bRemove >>> followCursor)

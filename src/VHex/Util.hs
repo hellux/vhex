@@ -3,9 +3,11 @@ module VHex.Util ( hexLength
                  , padIn, padOut
                  , groupsOf
                  , fromDir
+                 , clamp
                  ) where
 
 import Brick.Types (Direction(Up, Down))
+import Brick.Util (clamp)
 
 fromDir :: Direction -> Int
 fromDir Up = -1

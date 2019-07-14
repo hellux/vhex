@@ -4,7 +4,9 @@ module VHex.ListZipper ( ListZipper
                        , before, selected, after
                        , position
                        , length
-                       , move, left, right
+                       , move
+                       , left, right
+                       , leftWrap, rightWrap
                        , beginning, end
                        , push, pop
                        ) where
@@ -59,6 +61,14 @@ left (ListZipper (nextSel:bef) aft) = ListZipper bef (nextSel:aft)
 right :: ListZipper a -> ListZipper a
 right lz@(ListZipper _ []) = lz
 right (ListZipper bef (sel:aft)) = ListZipper (sel:bef) aft
+
+leftWrap :: ListZipper a -> ListZipper a
+leftWrap (ListZipper [] aft) = let a:as = reverse aft in ListZipper as [a]
+leftWrap lz = left lz
+
+rightWrap :: ListZipper a -> ListZipper a
+rightWrap (ListZipper bef [sel]) = ListZipper [] (reverse bef++[sel])
+rightWrap lz = right lz
 
 beginning :: ListZipper a -> ListZipper a
 beginning lz@(ListZipper _ []) = lz

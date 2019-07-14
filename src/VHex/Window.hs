@@ -13,7 +13,7 @@ import Control.Monad.Reader
 
 import Lens.Micro
 
-import Graphics.Vty.Input.Events (Event(..), Key(..))
+import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(..))
 
 import Brick.Main
 import Brick.Types
@@ -27,7 +27,19 @@ import VHex.ListZipper (ListZipper)
 import qualified VHex.ListZipper as LZ
 
 import VHex.Window.Buffer
+    ( BufferM
+    , BufferContext(..)
+    , Buffer(..)
+    , toBuffer, fromBuffer
+    )
+import qualified VHex.Window.Buffer as Buf
 import VHex.Window.Input
+    ( InputM
+    , InputContext(..)
+    , Input(..)
+    , toInput, fromInput
+    )
+import qualified VHex.Window.Input as Inp
 import VHex.Window.ByteView (ByteView)
 import qualified VHex.Window.ByteView as BV
 
@@ -57,33 +69,50 @@ normalMode = NormalMode (CmdNone Nothing)
 updateWindow :: Event -> EditorState -> EventM Name EditorState
 updateWindow vtye es = case esMode es of
     NormalMode _ -> case vtye of
-        EvKey (KChar 'i') [] -> es & asInput InsertMode is enterInsertMode
-        EvKey (KChar 'r') [] -> es & asInput ReplaceMode is enterReplaceMode
-        _ -> asBuffer (normalOp vtye) es
+        EvKey (KChar '\t') [] -> es & esWindowL.wsLayoutL %~ LZ.rightWrap
+                                    & return
+        EvKey KBackTab     [] -> es & esWindowL.wsLayoutL %~ LZ.leftWrap
+                                    & return
+        EvKey (KChar 'i')  [] -> es & asInput InsertMode is
+                                              Inp.enterInsertMode
+        EvKey (KChar 'r')  [] -> es & asInput ReplaceMode is
+                                              Inp.enterReplaceMode
+        _                     -> es & asBuffer (normalOp vtye)
         where is = InputState { isInput = LZ.empty, isNewByte = True }
     InputMode im is -> case vtye of
-        EvKey KEsc  [] -> es & asInput im is exitInputMode
+        EvKey KEsc  [] -> es & asInput im is Inp.exitInputMode
                             <&> esModeL .~ normalMode
         _ -> asInput im is (inputOp vtye) es
 
 normalOp :: Event -> (Buffer -> BufferM Buffer)
 normalOp vtye = case vtye of
-    EvKey (KChar 'h') [] -> curHori Up
-    EvKey KLeft [] -> curHori Up
-    EvKey (KChar 'j') [] -> curVert Down
-    EvKey KDown [] -> curVert Down
-    EvKey (KChar 'k') [] -> curVert Up
-    EvKey KUp [] -> curVert Up
-    EvKey (KChar 'l') [] -> curHori Down
-    EvKey KRight [] -> curHori Down
+    EvKey (KChar 'h') [] -> Buf.curHori Up
+    EvKey KLeft [] -> Buf.curHori Up
+    EvKey (KChar 'j') [] -> Buf.curVert Down
+    EvKey KDown [] -> Buf.curVert Down
+    EvKey (KChar 'k') [] -> Buf.curVert Up
+    EvKey KUp [] -> Buf.curVert Up
+    EvKey (KChar 'l') [] -> Buf.curHori Down
+    EvKey KRight [] -> Buf.curHori Down
+    EvKey (KChar '0') [] -> Buf.curBeginning
+    EvKey (KChar '^') [] -> Buf.curBeginning
+    EvKey (KChar '$') [] -> Buf.curEnd
+    EvKey (KChar 'g') [] -> Buf.curTop
+    EvKey (KChar 'G') [] -> Buf.curBottom
+    EvKey (KChar 'y') [MCtrl] -> Buf.scroll Up
+    EvKey (KChar 'e') [MCtrl] -> Buf.scroll Down
+    EvKey (KChar 'u') [MCtrl] -> Buf.scrollHalfPage Up
+    EvKey (KChar 'd') [MCtrl] -> Buf.scrollHalfPage Down
+    EvKey (KChar 'x') [] -> Buf.removeWord
+    EvKey (KChar 'X') [] -> Buf.removeWordPrev
     _ -> return
 
 inputOp :: Event -> (Input -> InputM Input)
 inputOp vtye = case vtye of
-    EvKey KLeft [] -> inputCurHori Up
-    EvKey KRight [] -> inputCurHori Down
-    EvKey KUp [] -> inputCurVert Up
-    EvKey KDown [] -> inputCurVert Down
+    EvKey KLeft [] -> Inp.curHori Up
+    EvKey KRight [] -> Inp.curHori Down
+    EvKey KUp [] -> Inp.curVert Up
+    EvKey KDown [] -> Inp.curVert Down
     _ -> return
 
 toBufCtx :: EditorState -> EventM Name BufferContext
