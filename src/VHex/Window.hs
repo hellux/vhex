@@ -86,12 +86,20 @@ updateWindow vtye esPrev = do
         op = case esMode esPrev of
             NormalMode _ -> case vtye of
                 EvKey (KChar '\t') [] -> esWindowL.wsLayoutL %~ LZ.rightWrap
-                                      >>> return
+                                     >>> return
                 EvKey KBackTab     [] -> esWindowL.wsLayoutL %~ LZ.leftWrap
-                                      >>> return
+                                     >>> return
                 EvKey (KChar 'i')  [] -> asInput InsertMode is
                                                  Inp.enterInputMode
-                EvKey (KChar 'r')  [] -> asInput ReplaceMode is
+                EvKey (KChar 'a')  [] -> asInput InsertMode is
+                                                 Inp.enterInputModeAppend
+                EvKey (KChar 'I')  [] -> asBuffer Buf.curTop
+                                     >=> asInput InsertMode is
+                                                 Inp.enterInputMode
+                EvKey (KChar 'A')  [] -> asBuffer Buf.curBottom
+                                     >=> asInput InsertMode is
+                                                 Inp.enterInputModeAppend
+                EvKey (KChar 'R')  [] -> asInput ReplaceMode is
                                                  Inp.enterInputMode
                 _                     -> asBuffer (normalOp vtye)
                 where is = InputState { isInput = LZ.empty, isNewByte = True }
@@ -147,8 +155,12 @@ inputOp im vtye = case vtye of
     EvKey KRight [] -> Inp.curHori Down
     EvKey KUp [] -> Inp.curVert Up
     EvKey KDown [] -> Inp.curVert Down
+    EvKey (KChar '\t') [] -> Inp.curWord Down
+    EvKey KBackTab [] -> Inp.curWord Up
     _ -> case im of
         InsertMode -> case vtye of
+            EvKey KBS [] -> Inp.remove
+            EvKey KDel [] -> Inp.delete
             EvKey (KChar c) [] -> Inp.insert c
             _ -> return
         ReplaceMode -> case vtye of

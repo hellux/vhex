@@ -6,7 +6,8 @@ module VHex.ListZipper
 , empty, singleton
 , fromList
 
--- * Indexing
+-- * Query
+, null
 , length
 , selected
 , position
@@ -17,11 +18,12 @@ module VHex.ListZipper
 , toList
 
 -- * Cursor operations
-, move
+, move, moveTo
 , left, right
 , leftWrap, rightWrap
 , beginning, end
-, insert, replace
+, replace
+, insert, remove
 , push, pop
 ) where
 
@@ -65,6 +67,10 @@ after :: ListZipper a -> [a]
 after (ListZipper _ []) = []
 after (ListZipper _ (_:aft)) = aft
 
+null :: ListZipper a -> Bool
+null (ListZipper [] []) = True
+null _ = False
+
 length :: ListZipper a -> Int
 length = List.length . toList
 
@@ -74,6 +80,16 @@ take n (ListZipper bef aft)
     | n > 0 = let f:eb = reverse (List.take n bef) in ListZipper eb [f]
     | otherwise = ListZipper [] []
     where len = List.length bef
+
+moveTo :: Int -> ListZipper a -> ListZipper a
+moveTo pos lz@(ListZipper _ aft)
+    | cur < pos = moveTo pos (right lz)
+    | pos < cur = case aft of
+                    [] -> lz
+                    [_] -> lz
+                    _ -> moveTo pos (left lz)
+    | otherwise = lz
+    where cur = position lz
 
 move :: Direction -> ListZipper a -> ListZipper a
 move Up = left
@@ -110,6 +126,11 @@ replace a (ListZipper bef []) = ListZipper bef [a]
 
 insert :: a -> ListZipper a -> ListZipper a
 insert a (ListZipper bef aft) = ListZipper bef (a:aft)
+
+remove :: ListZipper a -> ListZipper a
+remove (ListZipper bef (_:aft)) = ListZipper bef aft
+remove (ListZipper (_:bs) []) = ListZipper bs []
+remove lz = lz
 
 push :: a -> ListZipper a -> ListZipper a
 push a (ListZipper bef aft) = ListZipper (a:bef) aft

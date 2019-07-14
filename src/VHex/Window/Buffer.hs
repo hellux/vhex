@@ -13,6 +13,7 @@ module VHex.Window.Buffer
 , bSize
 , bInsert, bReplace
 , bRemove
+, bMove
 
 -- * Operations on buffer in context.
 

@@ -61,7 +61,7 @@ data CmdLineMode = CmdNone (Maybe MsgState)
                  | CmdEx CmdLine
                  deriving (Show)
 
-data InsMode = InsertMode | ReplaceMode deriving (Show)
+data InsMode = InsertMode | ReplaceMode deriving (Eq, Show)
 
 data InputState = InputState
     { isInput :: ListZipper Char
