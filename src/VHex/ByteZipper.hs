@@ -18,12 +18,13 @@ import qualified Data.ByteString as B
 
 import Brick.Util (clamp)
 
-data ByteZipper = ByteZipper { prev :: ByteString
-                     , selected :: Maybe Word8
-                     , location :: Int
-                     , length :: Int
-                     , next :: ByteString
-                     }
+data ByteZipper = ByteZipper
+    { prev :: ByteString
+    , selected :: Maybe Word8
+    , location :: Int
+    , length :: Int
+    , next :: ByteString
+    }
 
 instance Show ByteZipper where
     show bz = fromBS (prev bz) ++ sel ++ fromBS (next bz)

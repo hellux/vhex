@@ -80,37 +80,15 @@ dimensions es = do
 normalMode :: Mode
 normalMode = NormalMode (CmdNone Nothing)
 
+normalModeCmd :: Mode
+normalModeCmd = NormalMode (CmdEx LZ.empty)
+
 updateWindow :: Event -> EditorState -> EventM Name EditorState
 updateWindow vtye esPrev = do
-    let op :: EditorState -> EventM Name EditorState
-        op = case esMode esPrev of
-            NormalMode _ -> case vtye of
-                EvKey (KChar '\t') [] -> esWindowL.wsLayoutL %~ LZ.rightWrap
-                                     >>> return
-                EvKey KBackTab     [] -> esWindowL.wsLayoutL %~ LZ.leftWrap
-                                     >>> return
-                EvKey (KChar 'i')  [] -> asInput InsertMode is
-                                                 Inp.enterInputMode
-                EvKey (KChar 'a')  [] -> asInput InsertMode is
-                                                 Inp.enterInputModeAppend
-                EvKey (KChar 'I')  [] -> asBuffer Buf.curTop
-                                     >=> asInput InsertMode is
-                                                 Inp.enterInputMode
-                EvKey (KChar 'A')  [] -> asBuffer Buf.curBottom
-                                     >=> asInput InsertMode is
-                                                 Inp.enterInputModeAppend
-                EvKey (KChar 'R')  [] -> asInput ReplaceMode is
-                                                 Inp.enterInputMode
-                _                     -> asBuffer (normalOp vtye)
-                where is = InputState { isInput = LZ.empty, isNewByte = True }
-            InputMode im is -> case vtye of
-                EvKey KEsc   [] -> asInput im is Inp.exitInputMode
-                               >=> (esModeL .~ normalMode >>> return)
-                EvKey KEnter [] -> asInput im is Inp.exitInputMode
-                               >=> (esModeL .~ normalMode >>> return)
-                _ -> asInput im is (inputOp im vtye)
-
-    esNext <- op esPrev
+    let op = case esMode esPrev of
+            NormalMode _ -> normalModeOp
+            InputMode im is -> inputModeOp im is
+    esNext <- op vtye esPrev
 
     if (esPrev^.esWindowL.wsBufferL&BZ.length) ==
        (esNext^.esWindowL.wsBufferL&BZ.length)
@@ -126,8 +104,35 @@ updateWindow vtye esPrev = do
 
     return esNext
 
-normalOp :: Event -> (Buffer -> BufferM Buffer)
-normalOp vtye = case vtye of
+-- | Get operation that operates in normal mode.
+normalModeOp :: Event -> EditorState -> EventM Name EditorState
+normalModeOp vtye = case vtye of
+    EvKey (KChar '\t') [] -> esWindowL.wsLayoutL %~ LZ.rightWrap >>> return
+    EvKey KBackTab     [] -> esWindowL.wsLayoutL %~ LZ.leftWrap >>> return
+    EvKey (KChar 'i')  [] -> asInput InsertMode is Inp.enterInputMode
+    EvKey (KChar 'a')  [] -> asInput InsertMode is Inp.enterInputModeAppend
+    EvKey (KChar 'I')  [] -> asBuffer Buf.curTop
+                         >=> asInput InsertMode is Inp.enterInputMode
+    EvKey (KChar 'A')  [] -> asBuffer Buf.curBottom
+                         >=> asInput InsertMode is Inp.enterInputModeAppend
+    EvKey (KChar 'R')  [] -> asInput ReplaceMode is Inp.enterInputMode
+    EvKey (KChar ':')  [] -> esModeL .~ normalModeCmd >>> return
+    _                     -> asBuffer (bufferOp vtye)
+    where is = InputState { isInput = LZ.empty, isNewByte = True }
+
+-- | Get operation that operates in input mode.
+inputModeOp :: InsMode -> InputState
+            -> Event -> EditorState -> EventM Name EditorState
+inputModeOp im is vtye = case vtye of
+    EvKey KEsc   [] -> asInput im is Inp.exitInputMode
+                   >=> (esModeL .~ normalMode >>> return)
+    EvKey KEnter [] -> asInput im is Inp.exitInputMode
+                   >=> (esModeL .~ normalMode >>> return)
+    _ -> asInput im is (inputOp im vtye)
+
+-- | Get operation that operates directly on buffer.
+bufferOp :: Event -> (Buffer -> BufferM Buffer)
+bufferOp vtye = case vtye of
     EvKey (KChar 'h') [] -> Buf.curHori Up
     EvKey KLeft [] -> Buf.curHori Up
     EvKey (KChar 'j') [] -> Buf.curVert Down
@@ -149,6 +154,7 @@ normalOp vtye = case vtye of
     EvKey (KChar 'X') [] -> Buf.removeWordPrev
     _ -> return
 
+-- | Get operation that operates directly on input.
 inputOp :: InsMode -> Event -> (Input -> InputM Input)
 inputOp im vtye = case vtye of
     EvKey KLeft [] -> Inp.curHori Up
@@ -166,7 +172,6 @@ inputOp im vtye = case vtye of
         ReplaceMode -> case vtye of
             EvKey (KChar c) [] -> Inp.replace c
             _ -> return
-
 
 toBufCtx :: EditorState -> EventM Name BufferContext
 toBufCtx es = do

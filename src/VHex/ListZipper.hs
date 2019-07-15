@@ -21,7 +21,7 @@ module VHex.ListZipper
 , move, moveTo
 , left, right
 , leftWrap, rightWrap
-, beginning, end
+, beginning, end, edge
 , replace
 , insert, remove
 , push, pop
@@ -120,6 +120,10 @@ end lz@(ListZipper _ []) = lz
 end lz@(ListZipper _ [_]) = lz
 end lz = end (right lz)
 
+edge :: ListZipper a -> ListZipper a
+edge lz@(ListZipper _ []) = lz
+edge lz = edge (right lz)
+
 replace :: a -> ListZipper a -> ListZipper a
 replace a (ListZipper bef (_:aft)) = ListZipper bef (a:aft)
 replace a (ListZipper bef []) = ListZipper bef [a]
@@ -129,7 +133,6 @@ insert a (ListZipper bef aft) = ListZipper bef (a:aft)
 
 remove :: ListZipper a -> ListZipper a
 remove (ListZipper bef (_:aft)) = ListZipper bef aft
-remove (ListZipper (_:bs) []) = ListZipper bs []
 remove lz = lz
 
 push :: a -> ListZipper a -> ListZipper a

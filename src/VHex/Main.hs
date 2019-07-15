@@ -2,23 +2,37 @@ module VHex.Main (vhex) where
 
 import System.Environment (getArgs)
 
-import Lens.Micro
+import Graphics.Vty.Input.Events (Event(..))
 
-import Graphics.Vty.Input.Events (Event(..), Key(..))
-
-import Brick.Main
-import Brick.Types
-import Brick.Widgets.Core
+import Brick.Main ( App(..)
+                  , defaultMain
+                  , continue
+                  , invalidateCache
+                  , showFirstCursor
+                  )
+import Brick.Types ( BrickEvent(..)
+                   , EventM
+                   , Next
+                   , Widget
+                   )
+import Brick.Widgets.Core ((<=>))
 
 import qualified VHex.ByteZipper as BZ
 import qualified VHex.ListZipper as LZ
-import VHex.Types
+import VHex.Types ( EditorState(..)
+                  , WindowState(..)
+                  , VHexConfig(..)
+                  , Mode(NormalMode)
+                  , CmdLineMode(..)
+                  , Name
+                  )
 import VHex.StatusLine (viewStatusLine)
 import VHex.Command (updateCmd, viewCmdLine, openFile)
 import VHex.Attributes (attributes)
 import VHex.Window (updateWindow, viewWindow)
 import qualified VHex.Window.ByteView as BV
 
+-- | Complete initial state of the application.
 initialState :: EditorState
 initialState = EditorState
     { esMode = NormalMode (CmdNone Nothing)
@@ -34,18 +48,17 @@ initialState = EditorState
         }
     }
 
-commandMode :: Mode
-commandMode = NormalMode $ CmdEx $ LZ.fromList ""
-
+-- | Update method a.k.a. event handler, receives the application state and an
+-- event and produces the next application state.
 update :: EditorState -> BrickEvent Name e -> EventM Name (Next EditorState)
 update es (VtyEvent (EvResize _ _)) = invalidateCache >> continue es
 update es (VtyEvent vtye) = case esMode es of
-    NormalMode (CmdEx cmdLine) -> updateCmd es vtye cmdLine
-    _ -> case vtye of
-        EvKey (KChar ':') [] -> es & esModeL .~ commandMode & continue
-        _ -> updateWindow vtye es >>= continue
+    NormalMode (CmdEx cmdLine) -> updateCmd vtye cmdLine es
+    _                          -> updateWindow vtye es >>= continue
 update es _ = continue es
 
+-- | View or draw method, takes the entire state of the application and
+-- produces an output screen.
 view :: EditorState -> [Widget Name]
 view es = [ viewWindow es <=> viewStatusLine es <=> viewCmdLine es ]
 
@@ -57,6 +70,8 @@ app = App { appDraw = view
           , appAttrMap = const attributes
           }
 
+-- | Main function, the entry point of the program. Loads a file if provided
+-- and begins the update -> event -> view loop.
 vhex :: IO ()
 vhex = do
     args <- getArgs

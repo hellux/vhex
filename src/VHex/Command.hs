@@ -14,7 +14,7 @@ import qualified Data.ByteString as B
 
 import Lens.Micro
 
-import Graphics.Vty.Input.Events (Event(..), Key(..))
+import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(..))
 
 import Brick.Main (continue, halt)
 import Brick.Types
@@ -38,8 +38,8 @@ cmdWrite args es = es & saveFile path & liftIO >>= continue
                     path' -> unwords path'
 
 commands :: [(String, (Command, ArgCount))]
-commands = [ ("write", (cmdWrite, (>=0)))
-           , ("quit",  (cmdQuit,  (==0)))
+commands = [ ("write",      (cmdWrite,      (>=0)))
+           , ("quit",       (cmdQuit,       (==0)))
            ]
 
 aliases :: [(String, String)]
@@ -95,7 +95,7 @@ executeCmd (cmd:args) = case cmdValue of
 setLine :: String -> EditorState -> EditorState
 setLine line es = case esMode es of
     NormalMode (CmdEx _) ->
-        es { esMode = NormalMode (CmdEx (LZ.fromList line)) }
+        es { esMode = NormalMode (CmdEx (LZ.edge $ LZ.fromList line)) }
     _ -> es
 
 tabComplete :: String -> EditorState -> EditorState
@@ -103,22 +103,31 @@ tabComplete line = case matches line of
     [match] -> setLine match
     _ -> id
 
-updateCmdLine :: CmdLine -> Event -> CmdLine
-updateCmdLine cl vtye = case vtye of
-    EvKey KLeft     [] -> cl & LZ.left
-    EvKey KRight    [] -> cl & LZ.right
-    EvKey KBS       [] -> cl & LZ.pop
-    EvKey (KChar c) [] -> cl & LZ.push c
-    _ -> cl
+updateCmdLine :: Event -> CmdLine -> CmdLine
+updateCmdLine vtye = case vtye of
+    EvKey KLeft       []        -> LZ.left
+    EvKey KRight      []        -> LZ.right
+    EvKey KBS         []        -> LZ.pop
+    EvKey (KChar 'h') [MCtrl]   -> LZ.pop
+    EvKey (KChar 'a') [MCtrl]   -> LZ.beginning
+    EvKey (KChar 'b') [MCtrl]   -> LZ.beginning
+    EvKey (KChar 'e') [MCtrl]   -> LZ.edge
+    EvKey (KChar 'd') [MCtrl]   -> LZ.remove
+    EvKey (KChar c)   []        -> LZ.push c
+    _                           -> id
 
-updateCmd :: EditorState -> Event -> CmdLine -> EventM Name (Next EditorState)
-updateCmd es vtye cmdLine = case vtye of
-    EvKey KEsc         [] -> es & emptyMsg & continue
-    EvKey KEnter       [] -> es & executeCmd (words line)
-    EvKey (KChar '\t') [] -> es & tabComplete line & continue
-    _ -> continue es { esMode = NormalMode $ CmdEx (updateCmdLine cmdLine vtye) }
+updateCmd :: Event -> CmdLine -> EditorState -> EventM Name (Next EditorState)
+updateCmd vtye cmdLine = case vtye of
+    EvKey KEsc         []       -> emptyMsg >>> continue
+    EvKey (KChar 'g')  [MCtrl]  -> emptyMsg >>> continue
+    EvKey (KChar 'c')  [MCtrl]  -> emptyMsg >>> continue
+    EvKey KEnter       []       -> executeCmd (words line)
+    EvKey (KChar 'j')  []       -> executeCmd (words line)
+    EvKey (KChar 'm')  []       -> executeCmd (words line)
+    EvKey (KChar '\t') []       -> tabComplete line >>> continue
+    _ -> esModeL .~ NormalMode (CmdEx (updateCmdLine vtye cmdLine))
+     >>> continue
     where line = LZ.toList cmdLine
-
 
 viewCmdLine :: EditorState -> Widget Name
 viewCmdLine es = case esMode es of
