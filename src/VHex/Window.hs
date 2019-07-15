@@ -24,6 +24,7 @@ import Brick.Widgets.Core
 import VHex.Types
 import VHex.Attributes
 import VHex.Util
+import VHex.Command (commandMode)
 import qualified VHex.ByteZipper as BZ
 import VHex.ListZipper (ListZipper)
 import qualified VHex.ListZipper as LZ
@@ -80,9 +81,6 @@ dimensions es = do
 normalMode :: Mode
 normalMode = NormalMode (CmdNone Nothing)
 
-normalModeCmd :: Mode
-normalModeCmd = NormalMode (CmdEx LZ.empty)
-
 updateWindow :: Event -> EditorState -> EventM Name EditorState
 updateWindow vtye esPrev = do
     let op = case esMode esPrev of
@@ -116,7 +114,7 @@ normalModeOp vtye = case vtye of
     EvKey (KChar 'A')  [] -> asBuffer Buf.curBottom
                          >=> asInput InsertMode is Inp.enterInputModeAppend
     EvKey (KChar 'R')  [] -> asInput ReplaceMode is Inp.enterInputMode
-    EvKey (KChar ':')  [] -> esModeL .~ normalModeCmd >>> return
+    EvKey (KChar ':')  [] -> esModeL .~ commandMode >>> return
     _                     -> asBuffer (bufferOp vtye)
     where is = InputState { isInput = LZ.empty, isNewByte = True }
 

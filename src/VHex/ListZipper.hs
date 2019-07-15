@@ -37,9 +37,11 @@ data ListZipper a = ListZipper [a] [a]
 instance Functor ListZipper where
     fmap f (ListZipper bef saft) = ListZipper (fmap f bef) (fmap f saft)
 
-instance Show (ListZipper Char) where
-    show (ListZipper bef (sel:aft)) = bef ++ "[" ++ [sel] ++  "]" ++ aft
-    show (ListZipper bef []) = bef ++ "[]"
+instance Show a => Show (ListZipper a) where
+    show (ListZipper bef (sel:aft)) = show bef ++ " ["
+                                   ++ show sel ++  "] "
+                                   ++ show aft
+    show (ListZipper bef []) = show bef ++ " []"
 
 empty :: ListZipper a
 empty = ListZipper [] []

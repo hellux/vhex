@@ -2,23 +2,26 @@
 
 module VHex.Types
 ( Name(..)
-, Layout
-, CmdLine
-
-, VHexConfig(..)
-, cfgScrollOffL, cfgBytesPerRowMultipleL
-
 , EditorState(..)
 , esModeL, esWindowL, esFilePathL, esConfigL
 
+-- * Configuration state
+, VHexConfig(..)
+, cfgScrollOffL, cfgBytesPerRowMultipleL
+
+-- * Window state
 , WindowState(..)
+, Layout
 , wsBufferL, wsLayoutL, wsScrollPosL
 
+-- * Mode state
 , Mode(..)
+, CmdLine, CompleteSuggestions
+, CmdState(..)
+, csLineL, csSuggestionsL
 , CmdLineMode(..)
 , MsgType(..)
 , MsgState(..)
-
 , InsMode(..)
 , InputState(..)
 , isInputL, isNewByteL
@@ -38,7 +41,6 @@ data Name = EditorWindow
           deriving (Eq, Ord)
 
 type Layout = ListZipper ByteView
-type CmdLine = ListZipper Char
 
 data MsgType = InfoMsg | ErrorMsg deriving (Show)
 
@@ -47,8 +49,17 @@ data MsgState = MsgState
     , msgContents :: String
     } deriving (Show)
 
+type CmdLine = ListZipper Char
+type CompleteSuggestions = ListZipper String
+
+data CmdState = CmdState
+    { csLine :: CmdLine
+    , csSuggestions :: Maybe CompleteSuggestions
+    } deriving (Show)
+suffixLenses ''CmdState
+
 data CmdLineMode = CmdNone (Maybe MsgState)
-                 | CmdEx CmdLine
+                 | CmdEx CmdState
                  deriving (Show)
 
 data InsMode = InsertMode | ReplaceMode deriving (Eq, Show)

@@ -23,7 +23,6 @@ library
                     VHex.Window.ByteView
                     VHex.Window.Buffer
                     VHex.Window.Input
-                    VHex.StatusLine
                     VHex.Command
                     VHex.ByteZipper
                     VHex.ListZipper

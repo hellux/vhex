@@ -1,7 +1,9 @@
 module VHex.Command ( openFile, saveFile
                     , infoMsg, errorMsg
-                    , viewCmdLine
+                    , commandMode
                     , updateCmd
+                    , viewCmdLine
+                    , viewStatusLine
                     ) where
 
 import Control.Category ((>>>))
@@ -9,7 +11,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Exception (try, IOException)
 
 import Data.Maybe (fromMaybe)
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, intersperse)
 import qualified Data.ByteString as B
 
 import Lens.Micro
@@ -18,7 +20,14 @@ import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(..))
 
 import Brick.Main (continue, halt)
 import Brick.Types
-import Brick.Widgets.Core (showCursor, (<+>), withAttr, str)
+import Brick.Widgets.Core ( showCursor
+                          , (<+>)
+                          , withAttr
+                          , str
+                          , padRight
+                          , hLimitPercent
+                          , hBox
+                          )
 
 import qualified VHex.ByteZipper as BZ
 import qualified VHex.ListZipper as LZ
@@ -68,6 +77,11 @@ saveFile path es = do
                          "B written")
                       & return
 
+commandMode :: Mode
+commandMode = NormalMode $ CmdEx CmdState { csLine = LZ.empty
+                                          , csSuggestions = Nothing
+                                          }
+
 emptyMsg :: EditorState -> EditorState
 emptyMsg = esModeL .~ (NormalMode $ CmdNone Nothing)
 
@@ -92,19 +106,30 @@ executeCmd (cmd:args) = case cmdValue of
     where cmdFull = fromMaybe cmd $ lookup cmd aliases
           cmdValue = lookup cmdFull commands
 
-setLine :: String -> EditorState -> EditorState
-setLine line es = case esMode es of
-    NormalMode (CmdEx _) ->
-        es { esMode = NormalMode (CmdEx (LZ.edge $ LZ.fromList line)) }
-    _ -> es
+complete :: CmdState -> CmdState
+complete cs = case (matches . LZ.toList . csLine) cs of
+    []  -> cs
+    [m] -> cs & csLineL .~ (LZ.edge $ LZ.fromList m)
+    ms  -> cs & csSuggestionsL ?~ LZ.fromList ms
 
-tabComplete :: String -> EditorState -> EditorState
-tabComplete line = case matches line of
-    [match] -> setLine match
-    _ -> id
+editorOp :: Event -> CmdState -> EditorState -> EventM Name (Next EditorState)
+editorOp vtye cs = case vtye of
+    EvKey KEsc         []       -> emptyMsg >>> continue
+    EvKey (KChar 'g')  [MCtrl]  -> emptyMsg >>> continue
+    EvKey (KChar 'c')  [MCtrl]  -> emptyMsg >>> continue
+    EvKey KEnter       []       -> executeCmd args
+    EvKey (KChar 'j')  []       -> executeCmd args
+    EvKey (KChar 'm')  []       -> executeCmd args
+    _ -> esModeL .~ NormalMode (CmdEx (cmdOp vtye cs)) >>> continue
+    where args = (words . LZ.toList . csLine) cs
 
-updateCmdLine :: Event -> CmdLine -> CmdLine
-updateCmdLine vtye = case vtye of
+cmdOp :: Event -> CmdState -> CmdState
+cmdOp vtye = case vtye of
+    EvKey (KChar '\t') [] -> complete
+    _ -> csLineL %~ lineOp vtye
+
+lineOp :: Event -> CmdLine -> CmdLine
+lineOp vtye = case vtye of
     EvKey KLeft       []        -> LZ.left
     EvKey KRight      []        -> LZ.right
     EvKey KBS         []        -> LZ.pop
@@ -116,18 +141,8 @@ updateCmdLine vtye = case vtye of
     EvKey (KChar c)   []        -> LZ.push c
     _                           -> id
 
-updateCmd :: Event -> CmdLine -> EditorState -> EventM Name (Next EditorState)
-updateCmd vtye cmdLine = case vtye of
-    EvKey KEsc         []       -> emptyMsg >>> continue
-    EvKey (KChar 'g')  [MCtrl]  -> emptyMsg >>> continue
-    EvKey (KChar 'c')  [MCtrl]  -> emptyMsg >>> continue
-    EvKey KEnter       []       -> executeCmd (words line)
-    EvKey (KChar 'j')  []       -> executeCmd (words line)
-    EvKey (KChar 'm')  []       -> executeCmd (words line)
-    EvKey (KChar '\t') []       -> tabComplete line >>> continue
-    _ -> esModeL .~ NormalMode (CmdEx (updateCmdLine vtye cmdLine))
-     >>> continue
-    where line = LZ.toList cmdLine
+updateCmd :: Event -> CmdState -> EditorState -> EventM Name (Next EditorState)
+updateCmd = editorOp
 
 viewCmdLine :: EditorState -> Widget Name
 viewCmdLine es = case esMode es of
@@ -139,10 +154,46 @@ viewCmdLine es = case esMode es of
                         ErrorMsg -> attrError
             in withAttr attr (str $ msgContents msg) <+>
                withAttr attrDef (str " ")
-        CmdEx cmdLine ->
-            let i = LZ.position cmdLine + 1
-            in showCursor CmdCursor (Location (i,0))
-                $ str (":" ++ LZ.toList cmdLine)
+        CmdEx cs ->
+            let i = LZ.position (csLine cs) + 1
+            in showCursor CmdCursor (Location (i, 0))
+                $ str (":" ++ LZ.toList (csLine cs))
     InputMode im _ -> case im of
         ReplaceMode -> withAttr attrMode $ str "-- REPLACE --"
-        InsertMode -> withAttr attrMode $ str "-- INSERT --"
+        InsertMode  -> withAttr attrMode $ str "-- INSERT --"
+
+-- TODO more accurate percentage using dimensions of editor
+scrollPercentage :: Int -> Int -> String
+scrollPercentage 0 _ = "Top"
+scrollPercentage scroll len = show p ++ "%" where
+    p :: Int
+    p = round $ (*100) $ (fromIntegral scroll :: Double) /
+                         (fromIntegral len :: Double)
+
+viewStatus :: EditorState -> Widget Name
+viewStatus es = withAttr attrStatusLine $ hBox
+    [ hLimitPercent 85 $ padRight Max
+                       $ str
+                       $ fromMaybe "[No Name]"
+                       $ esFilePath es
+    , padRight Max $ str
+                   $ show (BZ.location
+                   $ es^.esWindowL.wsBufferL)
+    , str $ scrollPercentage (es^.esWindowL.wsScrollPosL)
+                             (BZ.length $ es^.esWindowL.wsBufferL)
+    ]
+
+viewSuggestions :: CompleteSuggestions -> Widget Name
+viewSuggestions sg = ( withAttr attrStatusLine
+                     . hBox
+                     . map str
+                     . intersperse "  "
+                     . LZ.toList
+                     ) sg
+
+viewStatusLine :: EditorState -> Widget Name
+viewStatusLine es = case esMode es of
+    NormalMode (CmdEx cs) -> case csSuggestions cs of
+        Just sg -> viewSuggestions sg
+        _ -> viewStatus es
+    _ -> viewStatus es

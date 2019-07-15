@@ -26,8 +26,11 @@ import VHex.Types ( EditorState(..)
                   , CmdLineMode(..)
                   , Name
                   )
-import VHex.StatusLine (viewStatusLine)
-import VHex.Command (updateCmd, viewCmdLine, openFile)
+import VHex.Command ( updateCmd
+                    , viewStatusLine
+                    , viewCmdLine
+                    , openFile
+                    )
 import VHex.Attributes (attributes)
 import VHex.Window (updateWindow, viewWindow)
 import qualified VHex.Window.ByteView as BV
@@ -53,7 +56,7 @@ initialState = EditorState
 update :: EditorState -> BrickEvent Name e -> EventM Name (Next EditorState)
 update es (VtyEvent (EvResize _ _)) = invalidateCache >> continue es
 update es (VtyEvent vtye) = case esMode es of
-    NormalMode (CmdEx cmdLine) -> updateCmd vtye cmdLine es
+    NormalMode (CmdEx cmdState) -> updateCmd vtye cmdState es
     _                          -> updateWindow vtye es >>= continue
 update es _ = continue es
 
