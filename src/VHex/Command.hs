@@ -46,15 +46,24 @@ cmdWrite args es = es & saveFile path & liftIO >>= continue
                     [] -> fromMaybe "" (esFilePath es)
                     path' -> unwords path'
 
-commands :: [(String, (Command, ArgCount))]
-commands = [ ("write",      (cmdWrite,      (>=0)))
-           , ("quit",       (cmdQuit,       (==0)))
-           ]
+_cmds :: [(String, String, Command, ArgCount)]
+_cmds =
+    [ ("w", "write", cmdWrite, (>=0))
+    , ("q", "quit", cmdQuit, (==0))
+    ]
 
+-- | Association list for obtaining commands and argument count test from a
+-- command name.
+commands :: [(String, (Command, ArgCount))]
+commands = map (\(_, name, cmd, argc) ->
+                 (name, (cmd, argc)))
+               _cmds
+
+-- | Association list for obtaining command names from an alias.
 aliases :: [(String, String)]
-aliases = [ ("w", "write")
-          , ("q", "quit")
-          ]
+aliases = map (\(alias, name, _, _) ->
+                (alias, name))
+              _cmds
 
 matches :: String -> [String]
 matches line = filter (isPrefixOf line) $ map fst commands

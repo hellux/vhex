@@ -90,8 +90,9 @@ data VHexConfig = VHexConfig
     { cfgScrollOff :: Int
     -- ^ Minimal number of lines to keep between cursor and edge of screen.
     , cfgBytesPerRowMultiple :: Int
-    -- ^ Keep lines a multiple of this value. E.g if there is space for 9 bytes
-    -- but the multiple is set to 4, then there will be only 8 lines per row.
+    -- ^ Keep number of bytes per line a multiple of this value. E.g if there
+    -- is space for 9 bytes but the multiple is set to 4, then there will be
+    -- only 8 lines per row.
     }
 suffixLenses ''VHexConfig
 
