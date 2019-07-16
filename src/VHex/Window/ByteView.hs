@@ -1,6 +1,11 @@
 module VHex.Window.ByteView
 ( ByteView
+, byteView
+
+-- * ByteView Functions
 , fromWord, toWord, displayWidth, spaceWidth
+
+-- * ByteView implementations
 , binary, oct, dec, hex
 , ascii1, asciiC, asciiCtrl, asciiCaret
 ) where
@@ -21,17 +26,17 @@ data BVName = Binary
             | Oct
             | Dec
             | Hex
-            | AsciiCtrl
             | Ascii1
+            | AsciiCtrl
             | AsciiC
             | AsciiCaret
             deriving (Eq, Ord)
 
 data ByteView = ByteView { _fromWord :: Word8 -> String
                          , _toWord :: String -> Maybe Word8
-                         , displayWidth :: Int
-                         , spaceWidth :: Int
-                         , bvName :: BVName
+                         , _displayWidth :: Int
+                         , _spaceWidth :: Int
+                         , _bvName :: BVName
                          }
 
 instance Eq ByteView where
@@ -43,15 +48,38 @@ instance Ord ByteView where
     (<=) = (<=) `on` bvName
     (>)  = (>)  `on` bvName
     (>=) = (<=) `on` bvName
--- API functions
 
+-- | Association list binding names to implementations.
+byteView :: [(BVName, ByteView)]
+byteView = [ (Binary, binary)
+           , (Oct, oct)
+           , (Dec, dec)
+           , (Hex, hex)
+           , (Ascii1, ascii1)
+           , (AsciiCtrl, asciiCtrl)
+           , (AsciiC, asciiC)
+           , (AsciiCaret, asciiCaret)
+           ]
+
+-- | Convert a single word to a string.
 fromWord :: ByteView -> Word8 -> String
 fromWord bv = padOut (displayWidth bv) ' ' . _fromWord bv
 
+-- | Convert an input string to a word, if possible.
 toWord :: ByteView -> String -> Maybe Word8
 toWord bv = _toWord bv . trim
 
--- API helper
+-- | Number of characters to display a single byte.
+displayWidth :: ByteView -> Int
+displayWidth = _displayWidth
+
+-- | Width of space between bytes.
+spaceWidth :: ByteView -> Int
+spaceWidth = _spaceWidth
+
+-- | Name associated with ByteView
+bvName :: ByteView -> BVName
+bvName = _bvName
 
 -- Converter helpers
 
@@ -68,9 +96,9 @@ createByteView :: (Word8 -> ShowS) -> ReadS Word8 -> BVName -> ByteView
 createByteView s r n = ByteView
     { _fromWord = fromWordShowS s
     , _toWord = toWordReadS r
-    , spaceWidth = sw
-    , displayWidth = dw
-    , bvName = n
+    , _spaceWidth = sw
+    , _displayWidth = dw
+    , _bvName = n
     }
     where fw = fromWordShowS s
           dw = (length . fw) 0
@@ -78,6 +106,7 @@ createByteView s r n = ByteView
 
 -- ByteView implementations
 
+-- | Binary representation, 8 bits per byte.
 binary :: ByteView
 binary = createByteView (showIntAtBase 2 intToDigit)
                         (readInt 2 isDigit valDigit)
@@ -90,15 +119,20 @@ binary = createByteView (showIntAtBase 2 intToDigit)
           intToDigit 1 = '1'
           intToDigit _ = '0'
 
+-- | Octal representation, zero-padded to two 3 characters.
 oct :: ByteView
 oct = createByteView showOct readOct Oct
 
+-- | Decimal representation, space-padded to two 3 characters.
 dec :: ByteView
 dec = createByteView showInt readDec Dec
 
+-- | Hexadecimal representation, zero-padded to two characters.
 hex :: ByteView
 hex = createByteView showHex readHex Hex
 
+-- | Ascii representation with 1 character per byte. If byte is an character,
+-- it is displayed, otherwise it is displayed as a dot.
 ascii1 :: ByteView
 ascii1 = ByteView
     { _fromWord = \w -> if w < 0x20 || w >= 0x7f
@@ -107,11 +141,22 @@ ascii1 = ByteView
     , _toWord = \w -> case w of
                         "" -> Just 0
                         c:_ -> (Just . fromIntegral . ord ) c
-    , displayWidth = 1
-    , spaceWidth = 0
-    , bvName = Ascii1
+    , _displayWidth = 1
+    , _spaceWidth = 0
+    , _bvName = Ascii1
     }
 
+-- | If the byte is a character it is displayed and space padded to 3 bytes.
+-- Escape sequences from C-standard are displayed like:
+--  * NULL              -> \0 
+--  * alert             -> \a
+--  * backspace         -> \b
+--  * form feed         -> \f
+--  * newline           -> \n
+--  * carriage return   -> \r
+--  * tab               -> \t
+--  * vertical tab      -> \v
+-- Remaining bytes are displayed in octal.
 asciiC :: ByteView
 asciiC = ByteView
     { _fromWord = \w -> case w of
@@ -125,11 +170,13 @@ asciiC = ByteView
         "\\f" -> Just 0x0c; "\\r" -> Just 0x0d
         [c] -> (Just . fromIntegral . ord) c
         str -> toWordReadS readOct str
-    , displayWidth = 3
-    , spaceWidth = 1
-    , bvName = AsciiC
+    , _displayWidth = 3
+    , _spaceWidth = 1
+    , _bvName = AsciiC
     }
 
+-- | Ascii characters with control codes represented by short names
+-- Remaining bytes are displayed in hexadecimal.
 asciiCtrl :: ByteView
 asciiCtrl = ByteView
     { _fromWord = \w -> case w of
@@ -158,11 +205,13 @@ asciiCtrl = ByteView
         "rs"  -> Just 0x1e; "us"  -> Just 0x1f; "del" -> Just 0x7f
         [c] -> (Just . fromIntegral . ord) c
         str -> toWordReadS readHex str
-    , displayWidth = 3
-    , spaceWidth = 1
-    , bvName = AsciiCtrl
+    , _displayWidth = 3
+    , _spaceWidth = 1
+    , _bvName = AsciiCtrl
     }
 
+-- | Ascii characters with control characters displayed in caret notation.
+-- Remaining bytes are displayed in hexadecimal.
 asciiCaret :: ByteView
 asciiCaret = ByteView
     { _fromWord = \w -> case w of
@@ -173,7 +222,7 @@ asciiCaret = ByteView
         ['^', c] -> (Just . fromIntegral . toggleCaret . ord . toUpper) c
         [c] -> (Just . fromIntegral . ord) c
         str -> toWordReadS readHex str
-    , displayWidth = 2
-    , spaceWidth = 1
-    , bvName = AsciiCaret
+    , _displayWidth = 2
+    , _spaceWidth = 1
+    , _bvName = AsciiCaret
     } where toggleCaret w = mod (w+64) 128
