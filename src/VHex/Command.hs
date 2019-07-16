@@ -1,5 +1,4 @@
 module VHex.Command ( openFile, saveFile
-                    , infoMsg, errorMsg
                     , commandMode
                     , updateCmd
                     , viewCmdLine
@@ -18,7 +17,7 @@ import Lens.Micro
 
 import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(..))
 
-import Brick.Main (continue, halt)
+import Brick.Main (continue, halt, invalidateCache)
 import Brick.Types
 import Brick.Widgets.Core ( showCursor
                           , (<+>)
@@ -29,6 +28,7 @@ import Brick.Widgets.Core ( showCursor
                           , hBox
                           )
 
+import VHex.Window.ByteView (byteView)
 import qualified VHex.ByteZipper as BZ
 import qualified VHex.ListZipper as LZ
 import VHex.Types
@@ -46,10 +46,18 @@ cmdWrite args es = es & saveFile path & liftIO >>= continue
                     [] -> fromMaybe "" (esFilePath es)
                     path' -> unwords path'
 
+cmdByteView :: Command
+cmdByteView [bvStr] es = case lookup bvStr byteView of
+    Nothing -> doneErr ("Byteview \"" ++ bvStr ++ "\" does not exist.") es
+    Just bv -> invalidateCache >>
+               (es & esWindowL.wsLayoutL %~ LZ.replace bv & done)
+cmdByteView _ es = done es
+
 _cmds :: [(String, String, Command, ArgCount)]
 _cmds =
-    [ ("w", "write", cmdWrite, (>=0))
-    , ("q", "quit", cmdQuit, (==0))
+    [ ("w",     "write",    cmdWrite,       (>=0))
+    , ("q",     "quit",     cmdQuit,        (==0))
+    , ("bv",    "byteview", cmdByteView,    (==1))
     ]
 
 -- | Association list for obtaining commands and argument count test from a
@@ -79,8 +87,8 @@ saveFile path es = do
     let contents = BZ.contents (es^.esWindowL.wsBufferL)
     res <- try $ B.writeFile path contents :: IO (Either IOException ())
     case res of
-        Left err -> es & errorMsg (show err) & return
-        Right _ -> es & infoMsg
+        Left err -> es & message ErrorMsg (show err) & return
+        Right _ -> es & message InfoMsg
                         (show path ++ " " ++
                          show (BZ.length $ es^.esWindowL.wsBufferL) ++
                          "B written")
@@ -91,27 +99,27 @@ commandMode = NormalMode $ CmdEx CmdState { csLine = LZ.empty
                                           , csSuggestions = Nothing
                                           }
 
-emptyMsg :: EditorState -> EditorState
-emptyMsg = esModeL .~ (NormalMode $ CmdNone Nothing)
-
 message :: MsgType -> String -> EditorState -> EditorState
 message t m = esModeL .~ (NormalMode $ CmdNone $ Just msgState) where
     msgState = MsgState { msgType = t, msgContents = m }
 
-infoMsg :: String -> EditorState -> EditorState
-infoMsg = message InfoMsg
+done :: EditorState -> EventM Name (Next EditorState)
+done = esModeL .~ (NormalMode $ CmdNone Nothing) >>> continue
 
-errorMsg :: String -> EditorState -> EditorState
-errorMsg = message ErrorMsg
+doneInfo :: String -> EditorState -> EventM Name (Next EditorState)
+doneInfo msg = message InfoMsg msg >>> continue
+
+doneErr :: String -> EditorState -> EventM Name (Next EditorState)
+doneErr msg = message ErrorMsg msg >>> continue
 
 executeCmd :: [String] -> EditorState -> EventM Name (Next EditorState)
-executeCmd [] = emptyMsg >>> continue
+executeCmd [] = done
 executeCmd (cmd:args) = case cmdValue of
-    Nothing -> errorMsg ("Invalid command: " ++ cmd) >>> continue
+    Nothing -> doneErr ("Invalid command: " ++ cmd)
     Just (func, argCount)
         | argCount (length args) -> func args
-        | otherwise -> errorMsg ("Invalid number of arguments: "
-                                ++ show (length args)) >>> continue
+        | otherwise -> doneErr ("Invalid number of arguments: "
+                                ++ show (length args))
     where cmdFull = fromMaybe cmd $ lookup cmd aliases
           cmdValue = lookup cmdFull commands
 
@@ -123,12 +131,12 @@ complete cs = case (matches . LZ.toList . csLine) cs of
 
 editorOp :: Event -> CmdState -> EditorState -> EventM Name (Next EditorState)
 editorOp vtye cs = case vtye of
-    EvKey KEsc         []       -> emptyMsg >>> continue
-    EvKey (KChar 'g')  [MCtrl]  -> emptyMsg >>> continue
-    EvKey (KChar 'c')  [MCtrl]  -> emptyMsg >>> continue
+    EvKey KEsc         []       -> done
+    EvKey (KChar 'g')  [MCtrl]  -> done
+    EvKey (KChar 'c')  [MCtrl]  -> done
     EvKey KEnter       []       -> executeCmd args
-    EvKey (KChar 'j')  []       -> executeCmd args
-    EvKey (KChar 'm')  []       -> executeCmd args
+    EvKey (KChar 'j')  [MCtrl]  -> executeCmd args
+    EvKey (KChar 'm')  [MCtrl]  -> executeCmd args
     _ -> esModeL .~ NormalMode (CmdEx (cmdOp vtye cs)) >>> continue
     where args = (words . LZ.toList . csLine) cs
 

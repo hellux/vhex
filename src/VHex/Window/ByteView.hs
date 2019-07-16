@@ -2,7 +2,7 @@ module VHex.Window.ByteView
 ( ByteView
 , byteView
 
--- * ByteView Functions
+-- * ByteView functions
 , fromWord, toWord, displayWidth, spaceWidth
 
 -- * ByteView implementations
@@ -49,16 +49,16 @@ instance Ord ByteView where
     (>)  = (>)  `on` bvName
     (>=) = (<=) `on` bvName
 
--- | Association list binding names to implementations.
-byteView :: [(BVName, ByteView)]
-byteView = [ (Binary, binary)
-           , (Oct, oct)
-           , (Dec, dec)
-           , (Hex, hex)
-           , (Ascii1, ascii1)
-           , (AsciiCtrl, asciiCtrl)
-           , (AsciiC, asciiC)
-           , (AsciiCaret, asciiCaret)
+-- | Association list binding string names to implementations.
+byteView :: [(String, ByteView)]
+byteView = [ ("binary", binary)
+           , ("oct", oct)
+           , ("dec", dec)
+           , ("hex", hex)
+           , ("ascii1", ascii1)
+           , ("asciictrl", asciiCtrl)
+           , ("asciic", asciiC)
+           , ("asciicaret", asciiCaret)
            ]
 
 -- | Convert a single word to a string.
@@ -77,7 +77,7 @@ displayWidth = _displayWidth
 spaceWidth :: ByteView -> Int
 spaceWidth = _spaceWidth
 
--- | Name associated with ByteView
+-- | Name associated with ByteView.
 bvName :: ByteView -> BVName
 bvName = _bvName
 
