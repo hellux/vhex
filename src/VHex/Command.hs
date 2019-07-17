@@ -6,10 +6,12 @@ module VHex.Command ( openFile, saveFile
                     ) where
 
 import Control.Category ((>>>))
+import Control.Monad ((>=>))
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (try, IOException)
 
-import Data.Maybe (fromMaybe)
+import Data.Functor (($>))
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.List (isPrefixOf, intersperse)
 import qualified Data.ByteString as B
 
@@ -37,27 +39,38 @@ import VHex.Attributes
 type Command = [String] -> EditorState -> EventM Name (Next EditorState)
 type ArgCount = Int -> Bool
 
+-- | Exit VHex. TODO do not exit with unsaved changes
 cmdQuit :: Command
 cmdQuit _ = halt
 
+-- | Write buffer to file.
 cmdWrite :: Command
 cmdWrite args es = es & saveFile path & liftIO >>= continue
     where path = case args of
                     [] -> fromMaybe "" (esFilePath es)
                     path' -> unwords path'
 
+-- | Set the byteview for the currently selected frame.
 cmdByteView :: Command
-cmdByteView [bvStr] es = case lookup bvStr byteView of
-    Nothing -> doneErr ("Byteview \"" ++ bvStr ++ "\" does not exist.") es
-    Just bv -> invalidateCache >>
-               (es & esWindowL.wsLayoutL %~ LZ.replace bv & done)
-cmdByteView _ es = done es
+cmdByteView [bvStr] = case lookup bvStr byteView of
+    Nothing -> doneErr ("Byteview \"" ++ bvStr ++ "\" does not exist.")
+    Just bv -> esWindowL.wsLayoutL %~ LZ.replace bv
+           >>> ($>) invalidateCache >=> done
+cmdByteView _ = done
+
+-- | Set the layout by providing a list of byteviews.
+cmdByteViews :: Command
+cmdByteViews bvs = case mapMaybe (`lookup` byteView) bvs of
+    [] -> doneErr "No valid byteviews.";
+    bs -> esWindowL.wsLayoutL .~ LZ.fromList bs
+      >>> ($>) invalidateCache >=> done
 
 _cmds :: [(String, String, Command, ArgCount)]
 _cmds =
-    [ ("w",     "write",    cmdWrite,       (>=0))
-    , ("q",     "quit",     cmdQuit,        (==0))
-    , ("bv",    "byteview", cmdByteView,    (==1))
+    [ ("w",     "write",        cmdWrite,       (>=0))
+    , ("q",     "quit",         cmdQuit,        (==0))
+    , ("bv",    "byteview",     cmdByteView,    (==1))
+    , ("bvs",   "byteviews",    cmdByteViews,   ( >0))
     ]
 
 -- | Association list for obtaining commands and argument count test from a
