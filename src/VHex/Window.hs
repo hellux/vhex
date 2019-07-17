@@ -76,13 +76,15 @@ data ByteViewContext = ByteViewContext
 
 -- | Determine how many bytes should be shown per row. Depends on the size of
 -- the offset bar, the number of frames and their widths.
-bytesPerRow :: Layout -> Int -> Int -> Int -> Int
-bytesPerRow l w bprm byteCount = max 1 (floorN bprm maxBytes) where
-    offsetWidth = hexLength $ byteCount - 1
+bytesPerRow :: Int -> EditorState -> Int
+bytesPerRow w es = max 1 (floorN bprm maxBytes) where
+    bprm = es&esConfig&cfgBytesPerRowMultiple
+    layout = (es&esWindow&wsLayout)
+    offsetWidth = hexLength $ (es&esWindow&wsBuffer&BZ.length) - 1
     linWidth = sum
              $ map ((+) <$> BV.displayWidth <*> BV.spaceWidth)
-             $ LZ.toList l
-    padding = LZ.length l - 1
+             $ LZ.toList layout
+    padding = LZ.length layout - 1
     maxBytes = div (w - offsetWidth - padding) linWidth
 
 -- | Number of columns and rows of the editor window.
@@ -92,10 +94,7 @@ dimensions es = do
     let (width, height) = case extent of
                             Nothing -> (0, 0)
                             Just (Extent _ _ dims _) -> dims
-        perRow = bytesPerRow (es^.esWindowL.wsLayoutL)
-                             width
-                             (es^.esConfigL.cfgBytesPerRowMultipleL)
-                             (es^.esWindowL.wsBufferL&BZ.length)
+        perRow = bytesPerRow width es
     return (perRow, height)
 
 normalMode :: Mode
@@ -289,10 +288,7 @@ viewWindow es = Widget Greedy Greedy $ do
     ctx <- getContext
     let ws = es^.esWindowL
         buf = ws^.wsBufferL
-        perRow = bytesPerRow (es^.esWindowL.wsLayoutL)
-                             (ctx^.availWidthL)
-                             (es^.esConfigL.cfgBytesPerRowMultipleL)
-                             (es^.esWindowL.wsBufferL&BZ.length)
+        perRow = bytesPerRow (ctx^.availWidthL) es
         bvc = ByteViewContext
             { visibleBytes = BS.unpack
                            $ BZ.slice (ws^.wsScrollPosL)
