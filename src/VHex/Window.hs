@@ -9,21 +9,30 @@ import Data.Word (Word8)
 import Data.Maybe (fromMaybe)
 import Data.List (intersperse)
 import qualified Data.ByteString as BS
+import Data.Function (on)
 
-import Control.Monad.Reader
+import Control.Monad ((>=>))
+import Control.Monad.Reader (runReader, runReaderT)
 import Control.Category ((>>>))
 
-import Lens.Micro
+import Lens.Micro ((^.), (&), (%~), (.~))
 
 import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(..))
 
-import Brick.Main
 import Brick.Types
-import Brick.Widgets.Core
+import Brick.Main (lookupExtent, invalidateCacheEntry, invalidateCache)
+import Brick.Widgets.Core ( hBox, vBox
+                          , showCursor
+                          , reportExtent
+                          , cached
+                          , hLimit, padLeft
+                          , withAttr
+                          , fill, str
+                          )
 
 import VHex.Types
 import VHex.Attributes
-import VHex.Util
+import VHex.Util (groupsOf, hexLength, padOut, floorN)
 import VHex.Command (commandMode)
 import qualified VHex.ByteZipper as BZ
 import VHex.ListZipper (ListZipper)
@@ -48,17 +57,27 @@ import qualified VHex.Window.ByteView as BV
 
 data ByteViewContext = ByteViewContext
     { visibleBytes :: [Word8]
+    -- ^ All bytes that are visible.
     , start :: Int
+    -- ^ Offset to first visible byte.
     , cols :: Int
+    -- ^ Number of bytes per row.
     , rows :: Int
+    -- ^ Number of rows of bytes.
     , selectedCol :: Int
+    -- ^ Selected column, 0-indexed.
     , selectedRow :: Int
+    -- ^ Selected row, 0-index from top of screen.
     , bufLength :: Int
+    -- ^ Total size of buffer in bytes.
     , input :: Maybe (ListZipper Char)
+    -- ^ User byte input.
     }
 
+-- | Determine how many bytes should be shown per row. Depends on the size of
+-- the offset bar, the number of frames and their widths.
 bytesPerRow :: Layout -> Int -> Int -> Int -> Int
-bytesPerRow l w bprm byteCount = max 1 $ floorN bprm maxBytes where
+bytesPerRow l w bprm byteCount = max 1 (floorN bprm maxBytes) where
     offsetWidth = hexLength $ byteCount - 1
     linWidth = sum
              $ map ((+) <$> BV.displayWidth <*> BV.spaceWidth)
@@ -66,6 +85,7 @@ bytesPerRow l w bprm byteCount = max 1 $ floorN bprm maxBytes where
     padding = LZ.length l - 1
     maxBytes = div (w - offsetWidth - padding) linWidth
 
+-- | Number of columns and rows of the editor window.
 dimensions :: EditorState -> EventM Name (Int, Int)
 dimensions es = do
     extent <- lookupExtent EditorWindow
@@ -88,17 +108,14 @@ updateWindow vtye esPrev = do
             InputMode im is -> inputModeOp im is
     esNext <- op vtye esPrev
 
-    if (esPrev^.esWindowL.wsBufferL&BZ.length) ==
-       (esNext^.esWindowL.wsBufferL&BZ.length)
+    if ((==) `on` (BZ.length . wsBuffer . esWindow)) esPrev esNext
         then do
             (w, _) <- dimensions esPrev
             let bvs = esPrev & esWindow & wsLayout & LZ.toList
                 invalidateRow r =
                     mapM_ (invalidateCacheEntry . (`CachedRow` r)) bvs
                 rowPrev = floorN w (esPrev & esWindow & wsBuffer & BZ.location)
-                rowNext = floorN w (esNext & esWindow & wsBuffer & BZ.location)
             invalidateRow rowPrev
-            invalidateRow rowNext
         else invalidateCache
 
     return esNext
@@ -181,6 +198,7 @@ toBufCtx es = do
         , bcRows = h
         }
 
+-- | Apply an operation in the context of a Buffer.
 asBuffer :: (Buffer -> BufferM Buffer) -> EditorState
          -> EventM Name EditorState
 asBuffer op es = do
@@ -191,6 +209,7 @@ asBuffer op es = do
 
     es & esWindowL %~ fromBuffer bufNext & return
 
+-- | Apply an operation in the context of an Input.
 asInput :: InsMode -> InputState -> (Input -> InputM Input) -> EditorState
         -> EventM Name EditorState
 asInput im is op es = do
@@ -205,6 +224,7 @@ asInput im is op es = do
     bc <- toBufCtx es
     runReader (fmap (fromInput im es) inpNext) bc & return
 
+-- | Create widget of offsets stacked on top of each other starting from top.
 viewOffset :: ByteViewContext -> Widget Name
 viewOffset bvc =
     ( vBox
@@ -219,23 +239,29 @@ viewOffset bvc =
                         then showHex offset ""
                         else "~"
 
+-- | Create a widget for a frame with provided byteview.
 viewByteView :: ByteViewContext -> (Bool, ByteView) -> Widget Name
 viewByteView bvc (focused, bv) =
     ( vBox
     . zipWith styleRow [0..]
-    . zipWith cached (fmap (CachedRow bv) [start bvc, start bvc+cols bvc..])
+    . zipWith maybeCached [0..]
     . map ( hBox
           . (:) (str "  ")
           . intersperse space
           . padOut (cols bvc) emptyByte
           )
     . groupsOf (cols bvc)
-    . zipWith styleCol [ (div i (cols bvc), mod i (cols bvc)) | i <- [0..] ]
---    . (++ [emptyByte])
+    . zipWith styleCol rowsAndCols
     . map (str . BV.fromWord bv)
     . visibleBytes
     ) bvc
     where
+    maybeCached :: Int -> Widget Name -> Widget Name
+    maybeCached row = let offset = start bvc + (cols bvc*row)
+                      in if row == selectedRow bvc
+                            then id
+                            else cached (CachedRow bv offset)
+    rowsAndCols = [ (div i (cols bvc), mod i (cols bvc)) | i <- [0..] ]
     styleCol pos col
         | pos /= (selectedRow bvc, selectedCol bvc) = col
         | not focused = withAttr attrSelected col
@@ -257,6 +283,7 @@ viewByteView bvc (focused, bv) =
     emptyByte = str $ replicate (BV.displayWidth bv) ' '
     space     = str $ replicate (BV.spaceWidth bv) ' '
 
+-- | Create a widget for the editor window.
 viewWindow :: EditorState -> Widget Name
 viewWindow es = Widget Greedy Greedy $ do
     ctx <- getContext

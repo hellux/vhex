@@ -98,7 +98,7 @@ openFile path es = do
 saveFile:: String -> EditorState -> IO EditorState
 saveFile path es = do
     let contents = BZ.contents (es^.esWindowL.wsBufferL)
-    res <- try $ B.writeFile path contents :: IO (Either IOException ())
+    res <- try (B.writeFile path contents) :: IO (Either IOException ())
     case res of
         Left err -> es & message ErrorMsg (show err) & return
         Right _ -> es & message InfoMsg
