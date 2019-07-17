@@ -35,7 +35,6 @@ library
                   , bytestring
                   , vty
                   , microlens
-                  , microlens-mtl
                   , brick
   ghc-options:      -Wall -fno-warn-unused-do-bind -O3
 

@@ -37,9 +37,8 @@ import Control.Monad.Reader
 import Control.Category ((>>>))
 
 import Lens.Micro ((&))
-import Lens.Micro.Mtl (view)
 
-import Brick.Types (Direction(..), suffixLenses)
+import Brick.Types (Direction(..))
 
 import VHex.Types
 import VHex.Util (floorN, fromDir, clamp)
@@ -54,7 +53,6 @@ data BufferContext = BufferContext
     , bcCols :: Int
     -- ^ Number
     }
-suffixLenses ''BufferContext
 
 data Buffer = Buffer
     { bBuf :: ByteZipper
@@ -111,9 +109,9 @@ containCursor b = let clamped = clamp 0 (bSize b-1) (bCursor b)
 -- | Move cursor to keep it in view when scrolling.
 keepCursor :: Buffer -> BufferM Buffer
 keepCursor b = do
-    cols <- view bcColsL
-    rows <- view bcRowsL
-    scrollOff <- view $ bcConfigL.cfgScrollOffL
+    cols <- asks bcCols
+    rows <- asks bcRows
+    scrollOff <- cfgScrollOff <$> asks bcConfig
 
     let curRow = div (bCursor b - bScroll b) cols
         newRow = clamp scrollOff (rows-scrollOff-1) curRow
@@ -124,9 +122,9 @@ keepCursor b = do
 -- | Scroll to keep cursor in view when moving.
 followCursor :: Buffer -> BufferM Buffer
 followCursor b = do
-    rows <- view bcRowsL
-    cols <- view bcColsL
-    scrollOff <- view $ bcConfigL.cfgScrollOffL
+    rows <- asks bcRows
+    cols <- asks bcCols
+    scrollOff <- cfgScrollOff <$> asks bcConfig
 
     let bottomMargin = bSize b-1 - cols*(rows-1)
         upperMargin = bCursor b + cols*(scrollOff+1-rows)
@@ -140,18 +138,18 @@ curHori dir b = b & bMove (fromDir dir) & containCursor >>= followCursor
 
 curVert :: Direction -> Buffer -> BufferM Buffer
 curVert dir b = do
-    step <- view bcColsL
+    step <- asks bcCols
     b & bMoveTo (bCursor b + fromDir dir*step) & containCursor >>= followCursor
 
 curBeginning :: Buffer -> BufferM Buffer
 curBeginning b = do
-    cols <- view bcColsL
+    cols <- asks bcCols
     let newPos = floorN cols (bCursor b)
     b & bMoveTo newPos & return
 
 curEnd :: Buffer -> BufferM Buffer
 curEnd b = do
-    cols <- view bcColsL
+    cols <- asks bcCols
     let lineEnd = floorN cols (bCursor b) + cols - 1
         newPos = min lineEnd (bSize b - 1)
     b & bMoveTo newPos & return
@@ -164,15 +162,15 @@ curBottom b = b & bMoveTo (bSize b-1) & followCursor
 
 scroll :: Direction -> Buffer -> BufferM Buffer
 scroll dir b = do
-    cols <- view bcColsL
+    cols <- asks bcCols
     let prev = bScroll b
         maxPos = floorN cols (bSize b-1)
     b { bScroll = clamp 0 maxPos (prev+fromDir dir*cols) } & keepCursor
 
 scrollHalfPage :: Direction -> Buffer -> BufferM Buffer
 scrollHalfPage dir b = do
-    cols <- view bcColsL
-    rows <- view bcRowsL
+    cols <- asks bcCols
+    rows <- asks bcRows
     let diff = fromDir dir * (div rows 2 * cols)
         newPos = clamp 0 (bSize b-1) (bCursor b+diff)
         newScroll = let maxScroll = floorN cols (bSize b-1)

@@ -79,7 +79,7 @@ data ByteViewContext = ByteViewContext
 bytesPerRow :: Int -> EditorState -> Int
 bytesPerRow w es = max 1 (floorN bprm maxBytes) where
     bprm = es&esConfig&cfgBytesPerRowMultiple
-    layout = (es&esWindow&wsLayout)
+    layout = es&esWindow&wsLayout
     offsetWidth = hexLength $ (es&esWindow&wsBuffer&BZ.length) - 1
     linWidth = sum
              $ map ((+) <$> BV.displayWidth <*> BV.spaceWidth)
