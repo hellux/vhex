@@ -41,7 +41,7 @@ initialState = EditorState
     { esMode = NormalMode (CmdNone Nothing)
     , esWindow = WindowState
         { wsBuffer = BZ.empty
-        , wsLayout = LZ.fromList [ BV.binary, BV.ascii1 ]
+        , wsLayout = LZ.fromList [ BV.hex, BV.ascii1 ]
         , wsScrollPos = 0
         }
     , esFilePath = Nothing

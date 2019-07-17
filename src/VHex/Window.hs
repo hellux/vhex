@@ -93,7 +93,8 @@ updateWindow vtye esPrev = do
         then do
             (w, _) <- dimensions esPrev
             let bvs = esPrev & esWindow & wsLayout & LZ.toList
-                invalidateRow r = mapM_ (invalidateCacheEntry . (`CachedRow` r)) bvs
+                invalidateRow r =
+                    mapM_ (invalidateCacheEntry . (`CachedRow` r)) bvs
                 rowPrev = floorN w (esPrev & esWindow & wsBuffer & BZ.location)
                 rowNext = floorN w (esNext & esWindow & wsBuffer & BZ.location)
             invalidateRow rowPrev
@@ -180,7 +181,8 @@ toBufCtx es = do
         , bcRows = h
         }
 
-asBuffer :: (Buffer -> BufferM Buffer) -> EditorState -> EventM Name EditorState
+asBuffer :: (Buffer -> BufferM Buffer) -> EditorState
+         -> EventM Name EditorState
 asBuffer op es = do
     bc <- toBufCtx es
 

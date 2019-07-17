@@ -106,9 +106,6 @@ message t m = esModeL .~ (NormalMode $ CmdNone $ Just msgState) where
 done :: EditorState -> EventM Name (Next EditorState)
 done = esModeL .~ (NormalMode $ CmdNone Nothing) >>> continue
 
-doneInfo :: String -> EditorState -> EventM Name (Next EditorState)
-doneInfo msg = message InfoMsg msg >>> continue
-
 doneErr :: String -> EditorState -> EventM Name (Next EditorState)
 doneErr msg = message ErrorMsg msg >>> continue
 
@@ -126,7 +123,7 @@ executeCmd (cmd:args) = case cmdValue of
 complete :: CmdState -> CmdState
 complete cs = case (matches . LZ.toList . csLine) cs of
     []  -> cs
-    [m] -> cs & csLineL .~ (LZ.edge $ LZ.fromList m)
+    [m] -> cs & csLineL .~ LZ.edge (LZ.fromList m)
     ms  -> cs & csSuggestionsL ?~ LZ.fromList ms
 
 editorOp :: Event -> CmdState -> EditorState -> EventM Name (Next EditorState)
@@ -201,12 +198,11 @@ viewStatus es = withAttr attrStatusLine $ hBox
     ]
 
 viewSuggestions :: CompleteSuggestions -> Widget Name
-viewSuggestions sg = ( withAttr attrStatusLine
-                     . hBox
-                     . map str
-                     . intersperse "  "
-                     . LZ.toList
-                     ) sg
+viewSuggestions = withAttr attrStatusLine
+                . hBox
+                . map str
+                . intersperse "  "
+                . LZ.toList
 
 viewStatusLine :: EditorState -> Widget Name
 viewStatusLine es = case esMode es of

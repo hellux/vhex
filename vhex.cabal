@@ -43,3 +43,4 @@ executable vhex
   main-is:          Main.hs
   build-depends:    base, vhex
   ghc-options:      -threaded -O3
+  default-language: Haskell2010

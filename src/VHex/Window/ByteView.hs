@@ -148,7 +148,7 @@ ascii1 = ByteView
 
 -- | If the byte is a character it is displayed and space padded to 3 bytes.
 -- Escape sequences from C-standard are displayed like:
---  * NULL              -> \0 
+--  * NULL              -> \0
 --  * alert             -> \a
 --  * backspace         -> \b
 --  * form feed         -> \f

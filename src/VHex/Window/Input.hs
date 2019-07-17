@@ -171,7 +171,7 @@ remove i = do
         op
             | pos == 0 && cursor == 0 = return
             | pos == 0 && dw == 1 = liftBuf Buf.removeWordPrev
-            | pos == 0 = leave 
+            | pos == 0 = leave
                      >=> curWord Up
                      >=> load
                      >=> iIsL.isInputL %~ (LZ.remove . LZ.end) >>> return
