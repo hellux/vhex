@@ -1,3 +1,13 @@
+{-|
+Module      : VHex.Main
+Description : Zipper for bytes in buffer.
+Copyright   : (c) Noah Hellman, 2019
+License     : GPL-3
+Maintainer  : noah.hellman@protonmail.com
+Stability   : unstable
+Portability : not portable
+-}
+
 module VHex.ByteZipper
 ( ByteZipper
 , empty, singleton, byteZipper

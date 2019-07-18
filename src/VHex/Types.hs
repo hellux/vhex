@@ -1,8 +1,19 @@
+{-|
+Module      : VHex.Main
+Description : Global types and complete application state.
+Copyright   : (c) Noah Hellman, 2019
+License     : GPL-3
+Maintainer  : noah.hellman@protonmail.com
+Stability   : unstable
+Portability : not portable
+-}
+
 {-# LANGUAGE TemplateHaskell #-}
 
 module VHex.Types
 ( Name(..)
 , EditorState(..)
+-- ** Lenses
 , esModeL, esWindowL, esFilePathL, esConfigL
 
 -- * Configuration state
@@ -12,6 +23,7 @@ module VHex.Types
 -- * Window state
 , WindowState(..)
 , Layout
+-- ** Lenses
 , wsBufferL, wsLayoutL, wsScrollPosL
 
 -- * Mode state
@@ -24,6 +36,7 @@ module VHex.Types
 , MsgState(..)
 , InsMode(..)
 , InputState(..)
+-- ** Lenses
 , isInputL, isNewByteL
 ) where
 
@@ -96,6 +109,7 @@ data VHexConfig = VHexConfig
     }
 suffixLenses ''VHexConfig
 
+-- | Entire state of the application.
 data EditorState = EditorState
     { esMode :: Mode
     -- ^ Current editor mode.

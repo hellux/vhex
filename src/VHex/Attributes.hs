@@ -1,5 +1,17 @@
+{-|
+Module      : VHex.Main
+Description : Global widget attributes.
+Copyright   : (c) Noah Hellman, 2019
+License     : GPL-3
+Maintainer  : noah.hellman@protonmail.com
+Stability   : unstable
+Portability : not portable
+-}
+
 module VHex.Attributes
-( attrCurrent
+( attributes
+-- * Attribute names
+, attrCurrent
 , attrDef
 , attrCursorLine
 , attrSelected
@@ -10,7 +22,6 @@ module VHex.Attributes
 , attrError
 , attrStatusLine
 , attrMode
-, attributes
 ) where
 
 import Graphics.Vty
@@ -23,30 +34,51 @@ import Graphics.Vty
 import Brick.Util (on, fg, bg)
 import Brick.AttrMap (attrName, AttrName, attrMap, AttrMap)
 
+-- | Keep the current attribute unchanged.
 attrCurrent :: AttrName
-attrDef :: AttrName
-attrCursorLine :: AttrName
-attrSelected :: AttrName
-attrSelectedFocused :: AttrName
-attrInvalid :: AttrName
-attrOffset :: AttrName
-attrOffsetCursorLine :: AttrName
-attrError :: AttrName
-attrStatusLine :: AttrName
-attrMode :: AttrName
-
 attrCurrent = attrName "current"
+
+-- | Default attribute, foreground color on background color.
+attrDef :: AttrName
 attrDef = attrName "def"
+
+-- | Attribute of selected line.
+attrCursorLine :: AttrName
 attrCursorLine = attrName "cursorLine"
+
+-- | Attribute of selected byte in an unfocused frame.
+attrSelected :: AttrName
 attrSelected = attrName "selected"
+
+-- | Attribute of selected byte in focused frame.
+attrSelectedFocused :: AttrName
 attrSelectedFocused = attrName "selectedFocused"
+
+-- | Attribute of invalid input.
+attrInvalid :: AttrName
 attrInvalid = attrName "invalid"
+
+-- | Attribute of offset numbers / addresses.
+attrOffset :: AttrName
 attrOffset = attrName "offset"
+
+-- | Attribute of offset for selected line.
 attrOffsetCursorLine = attrName "offsetCursorLine"
+attrOffsetCursorLine :: AttrName
+
+-- | Attribute of the status line.
 attrStatusLine = attrName "statusline"
+attrStatusLine :: AttrName
+
+-- | Attribute of the mode indicator text on the command line.
+attrMode :: AttrName
 attrMode = attrName "mode"
+
+-- | Attribute of error messages on the command line.
+attrError :: AttrName
 attrError = attrName "error"
 
+-- | The attribute map binding attribute names to actual attributes.
 attributes :: AttrMap
 attributes = attrMap mempty
     [ (attrCurrent,             currentAttr)

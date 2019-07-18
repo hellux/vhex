@@ -1,4 +1,12 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-|
+Module      : VHex.Main
+Description : Operations on buffer.
+Copyright   : (c) Noah Hellman, 2019
+License     : GPL-3
+Maintainer  : noah.hellman@protonmail.com
+Stability   : unstable
+Portability : not portable
+-}
 
 module VHex.Window.Buffer
 ( BufferM

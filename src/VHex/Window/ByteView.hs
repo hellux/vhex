@@ -1,3 +1,13 @@
+{-|
+Module      : VHex.Main
+Description : Representations of bytes.
+Copyright   : (c) Noah Hellman, 2019
+License     : GPL-3
+Maintainer  : noah.hellman@protonmail.com
+Stability   : unstable
+Portability : not portable
+-}
+
 module VHex.Window.ByteView
 ( ByteView
 , byteView

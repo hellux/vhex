@@ -1,3 +1,13 @@
+{-|
+Module      : VHex.Main
+Description : Various utility functions.
+Copyright   : (c) Noah Hellman, 2019
+License     : GPL-3
+Maintainer  : noah.hellman@protonmail.com
+Stability   : unstable
+Portability : not portable
+-}
+
 module VHex.Util ( hexLength
                  , floorN
                  , padIn, padOut
@@ -17,15 +27,15 @@ fromDir :: Direction -> Int
 fromDir Up = -1
 fromDir Down = 1
 
--- character length of hex representation of number
+-- | Character length of hex representation of number.
 hexLength :: Int -> Int
 hexLength = max 1 . ceiling . logBase 16 . (fromIntegral :: Int -> Double)
 
--- round down to closest multiple of n
+-- | Round down to closest multiple of n.
 floorN :: Int -> Int -> Int
 floorN n x = x - mod x n
 
--- prepend xs with p until length is n
+-- | Prepend xs with p until length is n.
 padIn :: Int -> a -> [a] -> [a]
 padIn n p xs
     | len < n = replicate (n-len) p ++ xs
@@ -33,14 +43,14 @@ padIn n p xs
     where len = length xs
 
 
--- append xs with p until length is n
+-- | Append xs with p until length is n.
 padOut :: Int -> a -> [a] -> [a]
 padOut n p xs
     | len < n = xs ++ replicate (n-len) p
     | otherwise = xs
     where len = length xs
 
--- split xs into lists with length n
+-- | Split xs into lists with length n.
 groupsOf :: Int -> [a] -> [[a]]
 groupsOf _ [] = []
 groupsOf n xs = let (y,ys) = splitAt n xs

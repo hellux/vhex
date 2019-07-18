@@ -1,3 +1,13 @@
+{-|
+Module      : VHex.Main
+Description : The editor window.
+Copyright   : (c) Noah Hellman, 2019
+License     : GPL-3
+Maintainer  : noah.hellman@protonmail.com
+Stability   : unstable
+Portability : not portable
+-}
+
 module VHex.Window
 ( updateWindow
 , viewWindow

@@ -1,3 +1,13 @@
+{-|
+Module      : VHex.Main
+Description : Operations during input.
+Copyright   : (c) Noah Hellman, 2019
+License     : GPL-3
+Maintainer  : noah.hellman@protonmail.com
+Stability   : unstable
+Portability : not portable
+-}
+
 {-# LANGUAGE TemplateHaskell #-}
 
 module VHex.Window.Input
